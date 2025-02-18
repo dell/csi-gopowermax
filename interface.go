@@ -1,5 +1,5 @@
 /*
- Copyright © 2020 Dell Inc. or its subsidiaries. All Rights Reserved.
+ Copyright © 2020-2025 Dell Inc. or its subsidiaries. All Rights Reserved.
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -387,6 +387,10 @@ type Pmax interface {
 	DeleteMigrationEnvironment(ctx context.Context, localSymID, remoteSymID string) error
 	// GetMigrationEnvironment returns a migration environment
 	GetMigrationEnvironment(ctx context.Context, localSymID, remoteSymID string) (*types.MigrationEnv, error)
+	// MigrateStorageGroup creates a Storage Group given the storageGroupID (name), srpID (storage resource pool), service level, and boolean for thick volumes.
+	// If srpID is "None" then serviceLevel and thickVolumes settings are ignored
+	MigrateStorageGroup(ctx context.Context, symID, storageGroupID, srpID, serviceLevel string, thickVolumes bool) (*types.StorageGroup, error)
+
 	// GetStorageGroupMigration returns migration sessions on the array
 	GetStorageGroupMigration(ctx context.Context, localSymID string) (*types.MigrationStorageGroups, error)
 	// GetStorageGroupMigrationByID returns migration details for a storage group

@@ -17,11 +17,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +34,18 @@ import (
 )
 
 type stubTypeWithMetaData struct{}
+
+type MyReader struct {
+	reader io.Reader
+}
+
+func (r *MyReader) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+func (r *MyReader) Close() error {
+	return nil
+}
 
 func (s stubTypeWithMetaData) MetaData() http.Header {
 	h := make(http.Header)
@@ -121,6 +136,15 @@ func TestNew(t *testing.T) {
 			},
 			debug:       false,
 			expectError: true,
+		},
+		{
+			name: "Host with showHTTP option",
+			host: "http://example.com",
+			opts: ClientOptions{
+				ShowHTTP: true,
+			},
+			debug:       false,
+			expectError: false,
 		},
 	}
 
@@ -349,12 +373,6 @@ func TestDoAndGetResponseBody(t *testing.T) {
 	httpClient := &http.Client{
 		Transport: &MockTransport{mockHTTPClient: mockHTTPClient},
 	}
-	c := &client{
-		http:     httpClient,
-		host:     "https://example.com",
-		token:    "mockToken",
-		showHTTP: false,
-	}
 
 	tests := []struct {
 		name          string
@@ -365,6 +383,7 @@ func TestDoAndGetResponseBody(t *testing.T) {
 		mockResponse  *http.Response
 		mockError     error
 		expectedError string
+		c             *client
 	}{
 		{
 			name:   "Successful GET request",
@@ -378,6 +397,12 @@ func TestDoAndGetResponseBody(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
 			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
+			},
 			mockError:     nil,
 			expectedError: "",
 		},
@@ -388,8 +413,14 @@ func TestDoAndGetResponseBody(t *testing.T) {
 			headers: map[string]string{
 				"Content-Type": "application/json",
 			},
-			body:          make(chan int), // invalid JSON body
-			mockResponse:  nil,
+			body:         make(chan int), // invalid JSON body
+			mockResponse: nil,
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
+			},
 			mockError:     errors.New("unsupported type error"),
 			expectedError: "json: unsupported type: chan int",
 		},
@@ -404,6 +435,12 @@ func TestDoAndGetResponseBody(t *testing.T) {
 			mockResponse: &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
+			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
 			},
 			mockError:     nil,
 			expectedError: "",
@@ -420,6 +457,12 @@ func TestDoAndGetResponseBody(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
 			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
+			},
 			mockError:     nil,
 			expectedError: "",
 		},
@@ -427,11 +470,61 @@ func TestDoAndGetResponseBody(t *testing.T) {
 			name:    "POST request with JSON body without Content-Type header set",
 			method:  http.MethodPost,
 			uri:     "/test",
-			headers: map[string]string{},
-			body:    map[string]string{"key": "value"},
+			headers: map[string]string{"Custom-Header": "application/json"},
+			body: &MyReader{
+				reader: strings.NewReader("Success"),
+			},
 			mockResponse: &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
+			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:   "Get request with path not starting with /",
+			method: http.MethodGet,
+			uri:    "test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			body: nil,
+			mockResponse: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
+			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: false,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:   "Successful GET request having client with showHTTP set to true",
+			method: http.MethodGet,
+			uri:    "test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			body: nil,
+			mockResponse: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"success": true}`)),
+			},
+			c: &client{
+				http:     httpClient,
+				host:     "https://example.com",
+				token:    "mockToken",
+				showHTTP: true,
 			},
 			mockError:     nil,
 			expectedError: "",
@@ -442,7 +535,7 @@ func TestDoAndGetResponseBody(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockHTTPClient.On("Do", mock.Anything).Return(tt.mockResponse, tt.mockError)
 
-			res, err := c.DoAndGetResponseBody(
+			res, err := tt.c.DoAndGetResponseBody(
 				context.Background(),
 				tt.method,
 				tt.uri,
@@ -582,6 +675,337 @@ func TestDoLog(t *testing.T) {
 				debug: tt.fields.debug,
 			}
 			c.doLog(tt.args.l, tt.args.msg)
+		})
+	}
+}
+
+func TestGet(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		headers      map[string]string
+		resp         interface{}
+		expectedErr  error
+		expectedBody string
+	}{
+		{
+			name: "Successful Get Request",
+			path: "/api/test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			resp:         nil,
+			expectedErr:  nil,
+			expectedBody: `{"message":"Success"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Add(key, value)
+				}
+
+				if tt.expectedErr != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					errData, _ := json.Marshal(tt.expectedErr)
+					_, err := w.Write(errData)
+					if err != nil {
+						return
+					}
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(tt.expectedBody))
+					if err != nil {
+						return
+					}
+				}
+			}))
+			defer ts.Close()
+
+			c, err := New(ts.URL, ClientOptions{Timeout: 10 * time.Second}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Get(context.Background(), tt.path, tt.headers, &tt.resp)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("expected error %v, got %v", tt.expectedErr, err)
+			}
+
+			body, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tt.expectedBody {
+				t.Errorf("expected body %s, got %s", tt.expectedBody, string(body))
+			}
+		})
+	}
+}
+
+func TestPost(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		headers      map[string]string
+		resp         interface{}
+		body         interface{}
+		expectedErr  error
+		expectedBody string
+	}{
+		{
+			name: "Successful Post Request",
+			path: "/api/test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			resp:         nil,
+			expectedErr:  nil,
+			expectedBody: `{"message":"Success"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Add(key, value)
+				}
+
+				if tt.expectedErr != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					errData, _ := json.Marshal(tt.expectedErr)
+					_, err := w.Write(errData)
+					if err != nil {
+						t.Fatalf("error writing error response: %v", err)
+					}
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(tt.expectedBody))
+					if err != nil {
+						t.Fatalf("error writing response: %v", err)
+					}
+				}
+			}))
+			defer ts.Close()
+
+			c, err := New(ts.URL, ClientOptions{Timeout: 10 * time.Second}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Post(context.Background(), tt.path, tt.headers, tt.body, &tt.resp)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("expected error %v, got %v", tt.expectedErr, err)
+			}
+			body, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tt.expectedBody {
+				t.Errorf("expected body %s, got %s", tt.expectedBody, string(body))
+			}
+		})
+	}
+}
+
+func TestPut(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		headers      map[string]string
+		resp         interface{}
+		body         interface{}
+		expectedErr  error
+		expectedBody string
+	}{
+		{
+			name: "Successful Put Request",
+			path: "/api/test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			resp:         nil,
+			body:         nil,
+			expectedErr:  nil,
+			expectedBody: `{"message":"Success"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Add(key, value)
+				}
+
+				if tt.expectedErr != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					errData, _ := json.Marshal(tt.expectedErr)
+					_, err := w.Write(errData)
+					if err != nil {
+						t.Fatalf("error writing error response: %v", err)
+					}
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(tt.expectedBody))
+					if err != nil {
+						t.Fatalf("error writing response: %v", err)
+					}
+				}
+			}))
+			defer ts.Close()
+
+			c, err := New(ts.URL, ClientOptions{Timeout: 10 * time.Second}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Put(context.Background(), tt.path, tt.headers, tt.body, &tt.resp)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("expected error %v, got %v", tt.expectedErr, err)
+			}
+			body, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tt.expectedBody {
+				t.Errorf("expected body %s, got %s", tt.expectedBody, string(body))
+			}
+		})
+	}
+}
+
+func TestDelete(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		headers      map[string]string
+		resp         interface{}
+		expectedErr  error
+		expectedBody string
+	}{
+		{
+			name: "Successful Get Request",
+			path: "/api/test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			resp:         nil,
+			expectedErr:  nil,
+			expectedBody: `{"message":"Success"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Add(key, value)
+				}
+
+				if tt.expectedErr != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					errData, _ := json.Marshal(tt.expectedErr)
+					_, err := w.Write(errData)
+					if err != nil {
+						return
+					}
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(tt.expectedBody))
+					if err != nil {
+						return
+					}
+				}
+			}))
+			defer ts.Close()
+
+			c, err := New(ts.URL, ClientOptions{Timeout: 10 * time.Second}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Delete(context.Background(), tt.path, tt.headers, &tt.resp)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("expected error %v, got %v", tt.expectedErr, err)
+			}
+
+			body, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tt.expectedBody {
+				t.Errorf("expected body %s, got %s", tt.expectedBody, string(body))
+			}
+		})
+	}
+}
+
+func TestDoMethod(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		headers      map[string]string
+		resp         interface{}
+		expectedErr  error
+		expectedBody string
+	}{
+		{
+			name: "Successful Get Request",
+			path: "/api/test",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			resp:         nil,
+			expectedErr:  nil,
+			expectedBody: `{"message":"Success"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for key, value := range tt.headers {
+					w.Header().Add(key, value)
+				}
+
+				if tt.expectedErr != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					errData, _ := json.Marshal(tt.expectedErr)
+					_, err := w.Write(errData)
+					if err != nil {
+						return
+					}
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, err := w.Write([]byte(tt.expectedBody))
+					if err != nil {
+						return
+					}
+				}
+			}))
+			defer ts.Close()
+
+			c, err := New(ts.URL, ClientOptions{Timeout: 10 * time.Second}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Do(context.Background(), http.MethodGet, tt.path, tt.headers, &tt.resp)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("expected error %v, got %v", tt.expectedErr, err)
+			}
+
+			body, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tt.expectedBody {
+				t.Errorf("expected body %s, got %s", tt.expectedBody, string(body))
+			}
 		})
 	}
 }

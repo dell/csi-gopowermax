@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,8 +129,10 @@ var Data struct {
 	FileIntIDtoFileInterface map[string]*types.FileInterface
 }
 
+var InducedErrors = new(inducedErrors)
+
 // InducedErrors constants
-var InducedErrors struct {
+type inducedErrors struct {
 	NoConnection                           bool
 	InvalidJSON                            bool
 	BadHTTPStatus                          int
@@ -156,6 +159,7 @@ var InducedErrors struct {
 	GetPortError                           bool
 	GetSpecificPortError                   bool
 	GetPortISCSITargetError                bool
+	GetPortNVMeTCPTargetError              bool
 	GetPortGigEError                       bool
 	GetDirectorError                       bool
 	GetInitiatorError                      bool
@@ -269,8 +273,72 @@ func hasError(errorType *bool) bool {
 	return false
 }
 
+func SafeSetInducedError(inducedErrsPtr interface{}, errName string, value interface{}) error {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+
+	v := reflect.ValueOf(inducedErrsPtr)
+
+	// Check if it is a pointer
+	if v.Kind() != reflect.Ptr {
+		return errors.New("expected a pointer to struct")
+	}
+
+	// Dereference the pointer
+	v = v.Elem()
+
+	// Check if it is a struct
+	if v.Kind() != reflect.Struct {
+		return errors.New("expected a struct")
+	}
+
+	field := v.FieldByName(errName)
+	if !field.IsValid() {
+		return errors.New("invalid field name")
+	}
+
+	if !field.CanSet() {
+		return errors.New("cannot set field")
+	}
+
+	// Check if the type of the value matches the field type
+	if field.Type() != reflect.TypeOf(value) {
+		return errors.New("incompatible type")
+	}
+
+	field.Set(reflect.ValueOf(value))
+	return nil
+}
+
+func SafeGetInducedError(inducedErrsPtr interface{}, errName string) (errValue interface{}, err error) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+
+	v := reflect.ValueOf(inducedErrsPtr)
+	if v.Kind() != reflect.Ptr {
+		return nil, errors.New("expected a pointer to struct")
+	}
+
+	v = v.Elem()
+
+	// Check if it is a struct
+	if v.Kind() != reflect.Struct {
+		return nil, errors.New("expected a struct")
+	}
+
+	field := v.FieldByName(errName)
+	if !field.IsValid() {
+		return nil, fmt.Errorf("field %s not found", errName)
+	}
+
+	return field.Interface(), nil
+}
+
 // Reset : re-initializes the variables
 func Reset() {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+
 	InducedErrors.NoConnection = false
 	InducedErrors.InvalidJSON = false
 	InducedErrors.BadHTTPStatus = 0
@@ -298,6 +366,7 @@ func Reset() {
 	InducedErrors.GetPortError = false
 	InducedErrors.GetSpecificPortError = false
 	InducedErrors.GetPortISCSITargetError = false
+	InducedErrors.GetPortNVMeTCPTargetError = false
 	InducedErrors.GetPortGigEError = false
 	InducedErrors.GetDirectorError = false
 	InducedErrors.GetInitiatorError = false
@@ -463,18 +532,18 @@ func Reset() {
 
 func initMockCache() {
 	// Initialize SGs
-	AddStorageGroup("CSI-Test-SG-1", "SRP_1", "Diamond")       // #nosec G20
-	AddStorageGroup("CSI-Test-SG-2", "SRP_1", "Diamond")       // #nosec G20
-	AddStorageGroup("CSI-Test-SG-3", "SRP_2", "Silver")        // #nosec G20
-	AddStorageGroup("CSI-Test-SG-4", "SRP_2", "Optimized")     // #nosec G20
-	AddStorageGroup("CSI-Test-SG-5", "SRP_2", "None")          // #nosec G20
-	AddStorageGroup("CSI-Test-SG-6", "None", "None")           // #nosec G20
-	AddStorageGroup("CSI-Test-Fake-Remote-SG", "None", "None") // #nosec G20
+	addStorageGroup("CSI-Test-SG-1", "SRP_1", "Diamond")       // #nosec G20
+	addStorageGroup("CSI-Test-SG-2", "SRP_1", "Diamond")       // #nosec G20
+	addStorageGroup("CSI-Test-SG-3", "SRP_2", "Silver")        // #nosec G20
+	addStorageGroup("CSI-Test-SG-4", "SRP_2", "Optimized")     // #nosec G20
+	addStorageGroup("CSI-Test-SG-5", "SRP_2", "None")          // #nosec G20
+	addStorageGroup("CSI-Test-SG-6", "None", "None")           // #nosec G20
+	addStorageGroup("CSI-Test-Fake-Remote-SG", "None", "None") // #nosec G20
 	// Initialize protected SG
-	AddStorageGroup(DefaultASYNCProtectedSG, "None", "None")        // #nosec G20
-	AddStorageGroup(DefaultMETROProtectedSG, "None", "None")        // #nosec G20
-	AddRDFStorageGroup(DefaultASYNCProtectedSG, DefaultRemoteSymID) // #nosec G20
-	AddRDFStorageGroup(DefaultMETROProtectedSG, DefaultRemoteSymID) // #nosec G20
+	addStorageGroup(DefaultASYNCProtectedSG, "None", "None")        // #nosec G20
+	addStorageGroup(DefaultMETROProtectedSG, "None", "None")        // #nosec G20
+	addRDFStorageGroup(DefaultASYNCProtectedSG, DefaultRemoteSymID) // #nosec G20
+	addRDFStorageGroup(DefaultMETROProtectedSG, DefaultRemoteSymID) // #nosec G20
 
 	// ISCSI directors
 	iscsiDir1 := "SE-1E"
@@ -486,15 +555,15 @@ func initMockCache() {
 	fcDir1PortKey1 := fcDir1 + ":" + "5"
 	fcDir2PortKey1 := fcDir2 + ":" + "1"
 	// Add Port groups
-	AddPortGroup("csi-pg", "Fibre", []string{fcDir1PortKey1, fcDir2PortKey1}) // #nosec G20
+	addPortGroupWithPortID("csi-pg", "Fibre", []string{fcDir1PortKey1, fcDir2PortKey1}) // #nosec G20
 	// Initialize initiators
 	// Initialize Hosts
 	initNode1List := make([]string, 0)
 	iqnNode1 := "iqn.1993-08.org.centos:01:5ae577b352a0"
 	initNode1 := iscsidir1PortKey1 + ":" + iqnNode1
 	initNode1List = append(initNode1List, iqnNode1)
-	AddInitiator(initNode1, iqnNode1, "GigE", []string{iscsidir1PortKey1}, "") // #nosec G20
-	AddHost("CSI-Test-Node-1", "iSCSI", initNode1List)                         // #nosec G20
+	addInitiator(initNode1, iqnNode1, "GigE", []string{iscsidir1PortKey1}, "") // #nosec G20
+	addHost("CSI-Test-Node-1", "iSCSI", initNode1List)                         // #nosec G20
 	initNode2List := make([]string, 0)
 	iqn1Node2 := "iqn.1993-08.org.centos:01:5ae577b352a1"
 	iqn2Node2 := "iqn.1993-08.org.centos:01:5ae577b352a2"
@@ -502,10 +571,10 @@ func initMockCache() {
 	init2Node2 := iscsidir1PortKey1 + ":" + iqn2Node2
 	initNode2List = append(initNode2List, iqn1Node2)
 	initNode2List = append(initNode2List, iqn2Node2)
-	AddInitiator(init1Node2, iqn1Node2, "GigE", []string{iscsidir1PortKey1}, "")       // #nosec G20
-	AddInitiator(init2Node2, iqn2Node2, "GigE", []string{iscsidir1PortKey1}, "")       // #nosec G20
-	AddHost("CSI-Test-Node-2", "iSCSI", initNode2List)                                 // #nosec G20
-	AddMaskingView("CSI-Test-MV-1", "CSI-Test-SG-1", "CSI-Test-Node-1", "iscsi_ports") // #nosec G20
+	addInitiator(init1Node2, iqn1Node2, "GigE", []string{iscsidir1PortKey1}, "")       // #nosec G20
+	addInitiator(init2Node2, iqn2Node2, "GigE", []string{iscsidir1PortKey1}, "")       // #nosec G20
+	addHost("CSI-Test-Node-2", "iSCSI", initNode2List)                                 // #nosec G20
+	addMaskingView("CSI-Test-MV-1", "CSI-Test-SG-1", "CSI-Test-Node-1", "iscsi_ports") // #nosec G20
 
 	initNode3List := make([]string, 0)
 	hba1Node3 := "20000090fa9278dd"
@@ -514,29 +583,35 @@ func initMockCache() {
 	init2Node3 := fcDir2PortKey1 + ":" + hba1Node3
 	init3Node3 := fcDir1PortKey1 + ":" + hba2Node3
 	init4Node3 := fcDir2PortKey1 + ":" + hba2Node3
-	AddInitiator(init1Node3, hba1Node3, "Fibre", []string{fcDir1PortKey1}, "") // #nosec G20
-	AddInitiator(init2Node3, hba1Node3, "Fibre", []string{fcDir2PortKey1}, "") // #nosec G20
-	AddInitiator(init3Node3, hba2Node3, "Fibre", []string{fcDir1PortKey1}, "") // #nosec G20
-	AddInitiator(init4Node3, hba2Node3, "Fibre", []string{fcDir2PortKey1}, "") // #nosec G20
+	addInitiator(init1Node3, hba1Node3, "Fibre", []string{fcDir1PortKey1}, "") // #nosec G20
+	addInitiator(init2Node3, hba1Node3, "Fibre", []string{fcDir2PortKey1}, "") // #nosec G20
+	addInitiator(init3Node3, hba2Node3, "Fibre", []string{fcDir1PortKey1}, "") // #nosec G20
+	addInitiator(init4Node3, hba2Node3, "Fibre", []string{fcDir2PortKey1}, "") // #nosec G20
 	initNode3List = append(initNode3List, hba1Node3)
 	initNode3List = append(initNode3List, hba2Node3)
-	AddHost("CSI-Test-Node-3-FC", "Fibre", initNode3List) // #nosec G20
-	AddTempSnapshots()
-	AddFileObjects()
+	addHost("CSI-Test-Node-3-FC", "Fibre", initNode3List) // #nosec G20
+	addTempSnapshots()
+	addFileObjects()
+}
+
+func AddFileObjects() {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	addFileObjects()
 }
 
 // AddFileObjects adds file objects for mock objects
-func AddFileObjects() {
+func addFileObjects() {
 	// Add a File System
-	AddNewFileSystem("id1", DefaultFSName, 4000)
+	addNewFileSystem("id1", DefaultFSName, 4000)
 	// Add a NFS Export
-	AddNewNFSExport("id1", "nfs-0")
-	AddNewNFSExport("id2", "nfs-del")
+	addNewNFSExport("id1", "nfs-0")
+	addNewNFSExport("id2", "nfs-del")
 	// Add a NAS Server
-	AddNewNASServer("id1", "nas-1")
-	AddNewNASServer("id2", "nas-del")
+	addNewNASServer("id1", "nas-1")
+	addNewNASServer("id2", "nas-del")
 	// Add a FileInterface
-	AddNewFileInterface("id1", "interface-1")
+	addNewFileInterface("id1", "interface-1")
 }
 
 var mockRouter http.Handler
@@ -548,11 +623,27 @@ func GetHandler() http.Handler {
 			if Debug {
 				log.Printf("handler called: %s %s", r.Method, r.URL)
 			}
-			if InducedErrors.InvalidJSON {
+			invalidJSONErr, err := SafeGetInducedError(InducedErrors, "InvalidJSON")
+			if err != nil {
+				writeError(w, "failed to get induced error for InvalidJSON", http.StatusRequestTimeout)
+				return
+			}
+			noConnectionErr, err := SafeGetInducedError(InducedErrors, "NoConnection")
+			if err != nil {
+				writeError(w, "failed to get induced error for NoConnection", http.StatusRequestTimeout)
+				return
+			}
+			badHTTPStatusErr, err := SafeGetInducedError(InducedErrors, "BadHTTPStatus")
+			if err != nil {
+				writeError(w, "failed to get induced error for BadHTTPStatus", http.StatusRequestTimeout)
+				return
+			}
+
+			if invalidJSONErr.(bool) {
 				w.Write([]byte(`this is not json`)) // #nosec G20
-			} else if InducedErrors.NoConnection {
+			} else if noConnectionErr.(bool) {
 				writeError(w, "No Connection", http.StatusRequestTimeout)
-			} else if InducedErrors.BadHTTPStatus != 0 {
+			} else if badHTTPStatusErr.(int) != 0 {
 				writeError(w, "Internal Error", InducedErrors.BadHTTPStatus)
 			} else {
 				if mockRouter != nil {
@@ -567,88 +658,89 @@ func GetHandler() http.Handler {
 
 func getRouter() http.Handler {
 	router := mux.NewRouter()
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/host/{id}", handleHost)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/host", handleHost)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/hostgroup/{id}", handleHostGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/hostgroup", handleHostGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/initiator/{id}", handleInitiator)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/initiator", handleInitiator)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/portgroup/{id}", handlePortGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/portgroup", handlePortGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/storagegroup/{id}", handleStorageGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/storagegroup", handleStorageGroup)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview/{mvID}/connections", handleMaskingViewConnections)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview/{mvID}", handleMaskingView)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview", handleMaskingView)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/srp/{id}", handleStorageResourcePool)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/srp", handleStorageResourcePool)
-	router.HandleFunc(PREFIXNOVERSION+"/common/Iterator/{iterId}/page", handleIterator)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/volume/{volID}", handleVolume)
-	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/volume", handleVolume)
-	router.HandleFunc(PRIVATEPREFIX+"/sloprovisioning/symmetrix/{symid}/volume", handlePrivVolume)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{director}/port/{id}", handlePort)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{director}/port", handlePort)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{id}", handleDirector)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director", handleDirector)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/job/{jobID}", handleJob)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/job", handleJob)
-	router.HandleFunc(PREFIX+"/system/symmetrix/{id}", handleSymmetrix)
-	router.HandleFunc(PREFIX+"/system/symmetrix", handleSymmetrix)
-	router.HandleFunc(PREFIX+"/system/version", handleVersion)
-	router.HandleFunc(PREFIX+"/version", handleVersion)
-	router.HandleFunc(PREFIXNOVERSION+"/version", handleVersion)
-	router.HandleFunc("/", handleNotFound)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/host/{id}", HandleHost)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/host", HandleHost)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/hostgroup/{id}", HandleHostGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/hostgroup", HandleHostGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/initiator/{id}", HandleInitiator)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/initiator", HandleInitiator)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/portgroup/{id}", HandlePortGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/portgroup", HandlePortGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/storagegroup/{id}", HandleStorageGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/storagegroup", HandleStorageGroup)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview/{mvID}/connections", HandleMaskingViewConnections)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview/{mvID}", HandleMaskingView)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/maskingview", HandleMaskingView)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/srp/{id}", HandleStorageResourcePool)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/srp", HandleStorageResourcePool)
+	router.HandleFunc(PREFIXNOVERSION+"/common/Iterator/{iterId}/page", HandleIterator)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/volume/{volID}", HandleVolume)
+	router.HandleFunc(PREFIX+"/sloprovisioning/symmetrix/{symid}/volume", HandleVolume)
+	router.HandleFunc(PRIVATEPREFIX+"/sloprovisioning/symmetrix/{symid}/volume", HandlePrivVolume)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{director}/port/{id}", HandlePort)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{director}/port", HandlePort)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director/{id}", HandleDirector)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/director", HandleDirector)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/job/{jobID}", HandleJob)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{symid}/job", HandleJob)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{id}", HandleSymmetrix)
+	router.HandleFunc(PREFIX+"/system/symmetrix", HandleSymmetrix)
+	router.HandleFunc(PREFIX+"/system/version", HandleVersion)
+	router.HandleFunc(PREFIX+"/version", HandleVersion)
+	router.HandleFunc(PREFIXNOVERSION+"/version", HandleVersion)
+	router.HandleFunc(PREFIX+"/system/symmetrix/{id}/refresh", HandleSymmetrix)
+	router.HandleFunc("/", HandleNotFound)
 
 	// StorageGroup Snapshots
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot", handleGetStorageGroupSnapshots)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid", handleGetStorageGroupSnapshotsSnapsIDs)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid/{snapID}", handleGetStorageGroupSnapshotsSnapsDetails)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot", HandleGetStorageGroupSnapshots)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid", HandleGetStorageGroupSnapshotsSnapsIDs)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid/{snapID}", HandleGetStorageGroupSnapshotsSnapsDetails)
 
 	// Snapshot
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/snapshot/{SnapID}", handleSnapshot)
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume", handleSymVolumes)
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot", handleVolSnaps)
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}", handleVolSnaps)
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation", handleGenerations)
-	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation/{genID}", handleGenerations)
-	router.HandleFunc(PREFIX+"/replication/capabilities/symmetrix", handleCapabilities)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/snapshot_policy/{snapshotPolicyID}/storagegroup/{storageGroupID}", handleStorageGroupSnapshotPolicy)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/snapshot/{SnapID}", HandleSnapshot)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume", HandleSymVolumes)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot", HandleVolSnaps)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}", HandleVolSnaps)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation", HandleGenerations)
+	router.HandleFunc(PRIVATEPREFIX+"/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation/{genID}", HandleGenerations)
+	router.HandleFunc(PREFIX+"/replication/capabilities/symmetrix", HandleCapabilities)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/snapshot_policy/{snapshotPolicyID}/storagegroup/{storageGroupID}", HandleStorageGroupSnapshotPolicy)
 
 	// SRDF
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group", handleRDFGroup)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group/{rdf_no}", handleRDFGroup)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}", handleRDFStorageGroup)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}/rdf_group", handleRDFStorageGroup)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}/rdf_group/{rdf_no}", handleSGRDF)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group/{rdf_no}/volume/{volume_id}", handleRDFDevicePair)
-	router.HandleFunc(INTERNALPREFIX+"/file/symmetrix/{symID}/rdf_group_numbers_free", handleFreeRDF)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director", handleRDFDirector)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port", handleRDFPort)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}", handleRDFPort)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}/remote_port", handleRDFRemotePort)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group", HandleRDFGroup)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group/{rdf_no}", HandleRDFGroup)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}", HandleRDFStorageGroup)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}/rdf_group", HandleRDFStorageGroup)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/storagegroup/{id}/rdf_group/{rdf_no}", HandleSGRDF)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/rdf_group/{rdf_no}/volume/{volume_id}", HandleRDFDevicePair)
+	router.HandleFunc(INTERNALPREFIX+"/file/symmetrix/{symID}/rdf_group_numbers_free", HandleFreeRDF)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director", HandleRDFDirector)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port", HandleRDFPort)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}", HandleRDFPort)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}/remote_port", HandleRDFRemotePort)
 
 	// Performance Metrics
-	router.HandleFunc(PREFIXNOVERSION+"/performance/StorageGroup/metrics", handleStorageGroupMetrics)
-	router.HandleFunc(PREFIXNOVERSION+"/performance/Volume/metrics", handleVolumeMetrics)
-	router.HandleFunc(PREFIXNOVERSION+"/performance/file/filesystem/metrics", handleFileSysMetrics)
+	router.HandleFunc(PREFIXNOVERSION+"/performance/StorageGroup/metrics", HandleStorageGroupMetrics)
+	router.HandleFunc(PREFIXNOVERSION+"/performance/Volume/metrics", HandleVolumeMetrics)
+	router.HandleFunc(PREFIXNOVERSION+"/performance/file/filesystem/metrics", HandleFileSysMetrics)
 
 	// Performance Keys
-	router.HandleFunc(PREFIXNOVERSION+"/performance/StorageGroup/keys", handleStorageGroupPerfKeys)
-	router.HandleFunc(PREFIXNOVERSION+"/performance/Array/keys", handleArrayPerfKeys)
+	router.HandleFunc(PREFIXNOVERSION+"/performance/StorageGroup/keys", HandleStorageGroupPerfKeys)
+	router.HandleFunc(PREFIXNOVERSION+"/performance/Array/keys", HandleArrayPerfKeys)
 
 	// Snapshot Policy
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/snapshot_policy/{snapshotPolicyId}", handleGetSnapshotPolicy)
-	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/snapshot_policy", handleCreateSnapshotPolicy)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/snapshot_policy/{snapshotPolicyId}", HandleGetSnapshotPolicy)
+	router.HandleFunc(PREFIX+"/replication/symmetrix/{symid}/snapshot_policy", HandleCreateSnapshotPolicy)
 
 	// File APIs
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_system/{fsID}", handleFileSystem)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_system", handleFileSystem)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nfs_export/{nfsID}", handleNFSExport)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nfs_export", handleNFSExport)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nas_server/{nasID}", handleNASServer)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nas_server", handleNASServer)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_interface", handleFileInterface)
-	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_interface/{interfaceID}", handleFileInterface)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_system/{fsID}", HandleFileSystem)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_system", HandleFileSystem)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nfs_export/{nfsID}", HandleNFSExport)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nfs_export", HandleNFSExport)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nas_server/{nasID}", HandleNASServer)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/nas_server", HandleNASServer)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_interface", HandleFileInterface)
+	router.HandleFunc(PREFIX+"/file/symmetrix/{symid}/file_interface/{interfaceID}", HandleFileInterface)
 
 	mockRouter = router
 	return router
@@ -657,6 +749,12 @@ func getRouter() http.Handler {
 // GET /replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid/{snapID}
 // PUT /replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid/{snapID}
 // DELETE /replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid/{snapID}
+func HandleGetStorageGroupSnapshotsSnapsDetails(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleGetStorageGroupSnapshotsSnapsDetails(w, r)
+}
+
 func handleGetStorageGroupSnapshotsSnapsDetails(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -697,6 +795,12 @@ func handleGetStorageGroupSnapshotsSnapsDetails(w http.ResponseWriter, r *http.R
 }
 
 // GET /replication/symmetrix/{symid}/storagegroup/{StorageGroupId}/snapshot/{snapshotId}/snapid
+func HandleGetStorageGroupSnapshotsSnapsIDs(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleGetStorageGroupSnapshotsSnapsIDs(w, r)
+}
+
 func handleGetStorageGroupSnapshotsSnapsIDs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -716,6 +820,12 @@ func handleGetStorageGroupSnapshotsSnapsIDs(w http.ResponseWriter, r *http.Reque
 
 // GET /replication/symmetrix/{symid}/storagegroup/{SnapID}/snapshot
 // POST /replication/symmetrix/{symid}/storagegroup/{SnapID}/snapshot
+func HandleGetStorageGroupSnapshots(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleGetStorageGroupSnapshots(w, r)
+}
+
 func handleGetStorageGroupSnapshots(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -754,6 +864,12 @@ func handleGetStorageGroupSnapshots(w http.ResponseWriter, r *http.Request) {
 // GET /replication/symmetrix/{symid}/snapshot_policy/{snapshotPolicyId}
 // PUT /replication/symmetrix/{symid}/snapshot_policy/{snapshotPolicyId}
 // DELETE /replication/symmetrix/{symid}/snapshot_policy/{snapshotPolicyId}
+func HandleGetSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleGetSnapshotPolicy(w, r)
+}
+
 func handleGetSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -808,6 +924,12 @@ func handleGetSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
 
 // POST /replication/symmetrix/{symid}/snapshot_policy
 // GET /replication/symmetrix/{symid}/snapshot_policy
+func HandleCreateSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleCreateSnapshotPolicy(w, r)
+}
+
 func handleCreateSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -850,6 +972,12 @@ func handleCreateSnapshotPolicy(w http.ResponseWriter, r *http.Request) {
 
 // GET univmax/restapi/100/replication/symmetrix/{symID}/rdf_director/{dir}/port?online=true
 // GET univmax/restapi/100/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}
+func HandleRDFPort(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFPort(w, r)
+}
+
 func handleRDFPort(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -882,6 +1010,12 @@ func handleRDFPort(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET univmax/restapi/100/replication/symmetrix/{symID}/rdf_director/{dir}/port/{port}/remote_port
+func HandleRDFRemotePort(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFRemotePort(w, r)
+}
+
 func handleRDFRemotePort(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -913,6 +1047,12 @@ func handleRDFRemotePort(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET univmax/restapi/100/replication/symmetrix/{symID}/rdf_director?online=true
+func HandleRDFDirector(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFDirector(w, r)
+}
+
 func handleRDFDirector(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -929,6 +1069,12 @@ func handleRDFDirector(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET univmax/restapi/internal/100/file/symmetrix/{symID}/rdf_group_numbers_free?remote_symmetrix_id={remoteSymID}
+func HandleFreeRDF(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleFreeRDF(w, r)
+}
+
 func handleFreeRDF(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -961,6 +1107,12 @@ func handleTODO(w http.ResponseWriter, _ *http.Request) {
 }
 
 // GET, POST /univmax/restapi/APIVersion/replication/symmetrix/{symID}/rdf_group/{rdf_no}/volume/{volume_id}
+func HandleRDFDevicePair(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFDevicePair(w, r)
+}
+
 func handleRDFDevicePair(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1023,6 +1175,12 @@ func handleRDFDevicePairInfo(w http.ResponseWriter, r *http.Request) {
 
 // GET, POST /univmax/restapi/APIVersion/replication/symmetrix/{symID}/rdf_group/
 // GET /univmax/restapi/APIVersion/replication/symmetrix/{symID}/rdf_group/{rdf_no}
+func HandleRDFGroup(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFGroup(w, r)
+}
+
 func handleRDFGroup(w http.ResponseWriter, r *http.Request) {
 	if InducedErrors.CreateRDFGroupError {
 		writeError(w, "error creating RDF group: induced error", http.StatusNotFound)
@@ -1036,7 +1194,7 @@ func handleRDFGroup(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		routeParams := mux.Vars(r)
 		rdfGroupNumber := routeParams["rdf_no"]
-		ReturnRDFGroup(w, rdfGroupNumber)
+		returnRDFGroup(w, rdfGroupNumber)
 	case http.MethodPost:
 		writeJSON(w, Data.AsyncRDFGroup)
 	default:
@@ -1079,6 +1237,12 @@ func returnRDFGroup(w http.ResponseWriter, rdfg string) {
 
 // GET /univmax/restapi/APIVersion/replication/symmetrix/{symid}/storagegroup/{id}
 // POST /univmax/restapi/APIVersion/replication/symmetrix/{symid}/storagegroup/{id}/rdf_group
+func HandleRDFStorageGroup(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleRDFStorageGroup(w, r)
+}
+
 func handleRDFStorageGroup(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1137,7 +1301,7 @@ func handleSGRDFCreation(w http.ResponseWriter, r *http.Request) {
 	mode := sgsrdf.ReplicationMode
 	storageGroupName := routeParams["id"]
 	symmetrixID := routeParams["symid"]
-	if _, err := AddRDFStorageGroup(storageGroupName, symmetrixID); err != nil {
+	if _, err := addRDFStorageGroup(storageGroupName, symmetrixID); err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1175,6 +1339,12 @@ func handleSGRDFCreation(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET, PUT /replication/symmetrix/{symid}/storagegroup/{id}/rdf_group/{rdf_no}
+func HandleSGRDF(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleSGRDF(w, r)
+}
+
 func handleSGRDF(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1231,7 +1401,7 @@ func handleSGRDFAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := modifySRDFGParam.Action
-	PerformActionOnRDFSG(w, rdfNo, action)
+	performActionOnRDFSG(w, rdfNo, action)
 }
 
 // PerformActionOnRDFSG updates rdfNo with given action
@@ -1270,6 +1440,12 @@ func performActionOnRDFSG(w http.ResponseWriter, rdfNo, action string) {
 }
 
 // GET /univmax/restapi/system/version
+func HandleVersion(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleVersion(w, r)
+}
+
 func handleVersion(w http.ResponseWriter, r *http.Request) {
 	auth := defaultUsername + ":" + defaultPassword
 	authExpected := fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
@@ -1296,6 +1472,12 @@ func handleVersion(w http.ResponseWriter, r *http.Request) {
 
 // GET /univmax/restapi/APIVersion/system/symmetrix/{id}"
 // GET /univmax/restapi/APIVersion/system/symmetrix"
+func HandleSymmetrix(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleSymmetrix(w, r)
+}
+
 func handleSymmetrix(w http.ResponseWriter, r *http.Request) {
 	if InducedErrors.GetSymmetrixError {
 		writeError(w, "Error retrieving Symmetrix: induced error", http.StatusRequestTimeout)
@@ -1319,6 +1501,12 @@ func handleSymmetrix(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func HandleStorageResourcePool(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleStorageResourcePool(w, r)
+}
+
 func handleStorageResourcePool(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	srpID := vars["id"]
@@ -1340,13 +1528,17 @@ func handleStorageResourcePool(w http.ResponseWriter, r *http.Request) {
 
 // GET /univmax/restapi/API_VERSION/sloprovisioning/symmetrix/{id}/volume/{id}
 // GET /univmax/restapi/API_VERSION/sloprovisioning/symmetrix/{id}/volume
+func HandleVolume(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleVolume(w, r)
+}
+
 func handleVolume(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	volID := vars["volID"]
 	switch r.Method {
 	case http.MethodGet:
-		mockCacheMutex.Lock()
-		defer mockCacheMutex.Unlock()
 		if volID == "" {
 			if InducedErrors.GetVolumeIteratorError {
 				writeError(w, "Error getting VolumeIterator: induced error", http.StatusRequestTimeout)
@@ -1436,23 +1628,23 @@ func handleVolume(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("PUT volume payload: %#v\n", updateVolumePayload)
 		executionOption := updateVolumePayload.ExecutionOption
 		if updateVolumePayload.EditVolumeActionParam.FreeVolumeParam != nil {
-			FreeVolume(w, updateVolumePayload.EditVolumeActionParam.FreeVolumeParam, volID, executionOption)
+			freeVolume(w, updateVolumePayload.EditVolumeActionParam.FreeVolumeParam, volID, executionOption)
 			return
 		}
 		if updateVolumePayload.EditVolumeActionParam.EnableMobilityIDParam != nil {
-			ModifyMobility(w, updateVolumePayload.EditVolumeActionParam.EnableMobilityIDParam, volID, executionOption)
+			modifyMobility(w, updateVolumePayload.EditVolumeActionParam.EnableMobilityIDParam, volID, executionOption)
 			return
 		}
 		if updateVolumePayload.EditVolumeActionParam.ModifyVolumeIdentifierParam != nil {
 			if vars["symid"] == Data.AsyncRDFGroup.RemoteSymmetrix {
-				RenameVolume(w, updateVolumePayload.EditVolumeActionParam.ModifyVolumeIdentifierParam, volID, executionOption, true)
+				renameVolume(w, updateVolumePayload.EditVolumeActionParam.ModifyVolumeIdentifierParam, volID, executionOption, true)
 			} else {
-				RenameVolume(w, updateVolumePayload.EditVolumeActionParam.ModifyVolumeIdentifierParam, volID, executionOption, false)
+				renameVolume(w, updateVolumePayload.EditVolumeActionParam.ModifyVolumeIdentifierParam, volID, executionOption, false)
 			}
 			return
 		}
 		if updateVolumePayload.EditVolumeActionParam.ExpandVolumeParam != nil {
-			ExpandVolume(w, updateVolumePayload.EditVolumeActionParam.ExpandVolumeParam, volID, executionOption)
+			expandVolume(w, updateVolumePayload.EditVolumeActionParam.ExpandVolumeParam, volID, executionOption)
 			return
 		}
 	case http.MethodDelete:
@@ -1464,7 +1656,7 @@ func handleVolume(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error deleting Volume: induced error - device is a member of a storage group", http.StatusForbidden)
 			return
 		}
-		err := DeleteVolume(volID)
+		err := deleteVolume(volID)
 		if err != nil {
 			writeError(w, "error deleteVolume: "+err.Error(), http.StatusBadRequest)
 			return
@@ -1652,6 +1844,12 @@ func newMockJob(jobID string, initialState string, finalState string, resourceLi
 	return job
 }
 
+func HandleJob(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleJob(w, r)
+}
+
 func handleJob(w http.ResponseWriter, r *http.Request) {
 	if InducedErrors.GetJobError {
 		writeError(w, "Error getting Job(s): induced error", http.StatusRequestTimeout)
@@ -1664,8 +1862,6 @@ func handleJob(w http.ResponseWriter, r *http.Request) {
 		// Return a job id list
 		jobIDList := new(types.JobIDList)
 		jobIDList.JobIDs = make([]string, 0)
-		mockCacheMutex.Lock()
-		defer mockCacheMutex.Unlock()
 		for key := range Data.JobIDToMockJob {
 			job := Data.JobIDToMockJob[key].Job
 			if queryParams.Get("status") == "" || queryParams.Get("status") == job.Status {
@@ -1682,7 +1878,7 @@ func handleJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "Cannot find role for user", http.StatusInternalServerError)
 		return
 	}
-	ReturnJobByID(w, jobID)
+	returnJobByID(w, jobID)
 }
 
 // ReturnJobByID - Returns job based on ID from mock cache
@@ -1715,10 +1911,14 @@ func returnJobByID(w http.ResponseWriter, jobID string) {
 }
 
 // /unixvmax/restapi/common/Iterator/{iterID]/page}
-func handleIterator(w http.ResponseWriter, r *http.Request) {
-	var err error
+func HandleIterator(w http.ResponseWriter, r *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleIterator(w, r)
+}
+
+func handleIterator(w http.ResponseWriter, r *http.Request) {
+	var err error
 	switch r.Method {
 	case http.MethodGet:
 		vars := mux.Vars(r)
@@ -1752,6 +1952,12 @@ func handleIterator(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func HandleStorageGroupSnapshotPolicy(w http.ResponseWriter, _ *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleStorageGroupSnapshotPolicy(w, nil)
+}
+
 func handleStorageGroupSnapshotPolicy(w http.ResponseWriter, _ *http.Request) {
 	if InducedErrors.GetStorageGroupSnapshotPolicyError {
 		writeError(w, "Error retrieving storage group snapshot policy: induced error", http.StatusRequestTimeout)
@@ -1764,6 +1970,12 @@ func handleStorageGroupSnapshotPolicy(w http.ResponseWriter, _ *http.Request) {
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/storagegroup
 // /univmax/restapi/91/sloprovisioning/symmetrix/{symid}/storagegroup/{id}
 // /univmax/restapi/91/sloprovisioning/symmetrix/{symid}/storagegroup
+func HandleStorageGroup(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleStorageGroup(w, r)
+}
+
 func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	sgID := vars["id"]
@@ -1775,9 +1987,9 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if vars["symid"] == Data.AsyncRDFGroup.RemoteSymmetrix && strings.Contains(sgID, "rep") {
-			ReturnStorageGroup(w, sgID, true)
+			returnStorageGroup(w, sgID, true)
 		} else {
-			ReturnStorageGroup(w, sgID, false)
+			returnStorageGroup(w, sgID, false)
 		}
 
 	case http.MethodPut:
@@ -1809,15 +2021,15 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 						size = addVolumeParam.VolumeAttributes[0].VolumeSize
 					}
 					size = addVolumeParam.VolumeAttributes[0].VolumeSize
-					AddVolumeToStorageGroupTest(w, name, size, sgID)
+					addVolumeToStorageGroupTest(w, name, size, sgID)
 				}
 				addSpecificVolumeParam := expandPayload.AddSpecificVolumeParam
 				if addSpecificVolumeParam != nil {
-					AddSpecificVolumeToStorageGroup(w, addSpecificVolumeParam.VolumeIDs, sgID)
+					addSpecificVolumeToStorageGroup(w, addSpecificVolumeParam.VolumeIDs, sgID)
 				}
 			}
 			if editPayload.RemoveVolumeParam != nil {
-				RemoveVolumeFromStorageGroup(w, editPayload.RemoveVolumeParam.VolumeIDs, sgID)
+				removeVolumeFromStorageGroup(w, editPayload.RemoveVolumeParam.VolumeIDs, sgID)
 			}
 		} else {
 			// for apiVersion 91
@@ -1835,15 +2047,15 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 				if addVolumeParam != nil {
 					name := addVolumeParam.VolumeAttributes[0].VolumeIdentifier.IdentifierName
 					size := addVolumeParam.VolumeAttributes[0].VolumeSize
-					AddVolumeToStorageGroupTest(w, name, size, sgID)
+					addVolumeToStorageGroupTest(w, name, size, sgID)
 				}
 				addSpecificVolumeParam := expandPayload.AddSpecificVolumeParam
 				if addSpecificVolumeParam != nil {
-					AddSpecificVolumeToStorageGroup(w, addSpecificVolumeParam.VolumeIDs, sgID)
+					addSpecificVolumeToStorageGroup(w, addSpecificVolumeParam.VolumeIDs, sgID)
 				}
 			}
 			if editPayload.RemoveVolumeParam != nil {
-				RemoveVolumeFromStorageGroup(w, editPayload.RemoveVolumeParam.VolumeIDs, sgID)
+				removeVolumeFromStorageGroup(w, editPayload.RemoveVolumeParam.VolumeIDs, sgID)
 			}
 		}
 	case http.MethodPost:
@@ -1866,11 +2078,11 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 		sgID := createSGPayload.StorageGroupID
 		// Data.StorageGroupIDToNVolumes[sgID] = 0
 		// fmt.Println("SG Name: ", sgID)
-		AddStorageGroupFromCreateParams(createSGPayload)
+		addStorageGroupFromCreateParams(createSGPayload)
 		if vars["symid"] == Data.AsyncRDFGroup.RemoteSymmetrix {
-			ReturnStorageGroup(w, sgID, true)
+			returnStorageGroup(w, sgID, true)
 		} else {
-			ReturnStorageGroup(w, sgID, false)
+			returnStorageGroup(w, sgID, false)
 		}
 
 	case http.MethodDelete:
@@ -1878,7 +2090,7 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error deleting storage group: induced error", http.StatusRequestTimeout)
 			return
 		}
-		RemoveStorageGroup(w, sgID)
+		removeStorageGroup(w, sgID)
 
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
@@ -1886,6 +2098,12 @@ func handleStorageGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/maskingview/{id}/connections
+func HandleMaskingViewConnections(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleMaskingViewConnections(w, r)
+}
+
 func handleMaskingViewConnections(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1935,6 +2153,12 @@ func handleMaskingViewConnections(w http.ResponseWriter, r *http.Request) {
 
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/maskingview/{id}
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/maskingview
+func HandleMaskingView(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleMaskingView(w, r)
+}
+
 func handleMaskingView(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mvID := vars["mvID"]
@@ -1993,7 +2217,7 @@ func handleMaskingView(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("PUT masking view payload: %#v\n", updateMaskingViewPayload)
 		executionOption := updateMaskingViewPayload.ExecutionOption
 		if &updateMaskingViewPayload.EditMaskingViewActionParam.RenameMaskingViewParam != nil {
-			RenameMaskingView(w, &updateMaskingViewPayload.EditMaskingViewActionParam.RenameMaskingViewParam, mvID, executionOption)
+			renameMaskingView(w, &updateMaskingViewPayload.EditMaskingViewActionParam.RenameMaskingViewParam, mvID, executionOption)
 			return
 		}
 
@@ -2002,7 +2226,7 @@ func handleMaskingView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error deleting Masking view: induced error", http.StatusRequestTimeout)
 			return
 		}
-		RemoveMaskingView(w, mvID)
+		removeMaskingView(w, mvID)
 
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
@@ -2055,12 +2279,18 @@ func newMaskingView(maskingViewID string, storageGroupID string, hostID string, 
 	Data.MaskingViewIDToMaskingView[maskingViewID] = maskingView
 }
 
-// AddStorageGroup - Adds a storage group to the mock data cache
 func AddStorageGroup(storageGroupID string, storageResourcePoolID string,
 	serviceLevel string,
 ) (*types.StorageGroup, error) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	return addStorageGroup(storageGroupID, storageResourcePoolID, serviceLevel)
+}
+
+// AddStorageGroup - Adds a storage group to the mock data cache
+func addStorageGroup(storageGroupID string, storageResourcePoolID string,
+	serviceLevel string,
+) (*types.StorageGroup, error) {
 	if _, ok := Data.StorageGroupIDToStorageGroup[storageGroupID]; ok {
 		return nil, errors.New("The requested storage group resource already exists")
 	}
@@ -2068,10 +2298,14 @@ func AddStorageGroup(storageGroupID string, storageResourcePoolID string,
 	return Data.StorageGroupIDToStorageGroup[storageGroupID], nil
 }
 
-// AddRDFStorageGroup ...
 func AddRDFStorageGroup(storageGroupID, symmetrixID string) (*types.RDFStorageGroup, error) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	return addRDFStorageGroup(storageGroupID, symmetrixID)
+}
+
+// AddRDFStorageGroup ...
+func addRDFStorageGroup(storageGroupID, symmetrixID string) (*types.RDFStorageGroup, error) {
 	if _, ok := Data.StorageGroupIDToRDFStorageGroup[storageGroupID]; ok {
 		return nil, fmt.Errorf("rdfStorageGroup already exists")
 	}
@@ -2134,9 +2368,9 @@ func addMaskingViewFromCreateParams(createParams *types.MaskingViewCreateParam) 
 	portGroupID := createParams.PortGroupSelection.UseExistingPortGroupParam.PortGroupID
 	sgID := createParams.StorageGroupSelection.UseExistingStorageGroupParam.StorageGroupID
 	if hostID != "" {
-		AddMaskingView(mvID, sgID, hostID, portGroupID) // #nosec G20
+		addMaskingView(mvID, sgID, hostID, portGroupID) // #nosec G20
 	} else if hostGroupID != "" {
-		AddMaskingView(mvID, sgID, hostGroupID, portGroupID) // #nosec G20
+		addMaskingView(mvID, sgID, hostGroupID, portGroupID) // #nosec G20
 	}
 }
 
@@ -2364,10 +2598,14 @@ func newInitiator(initiatorID string, initiatorName string, initiatorType string
 	Data.InitiatorIDToInitiator[initiatorID] = initiator
 }
 
-// AddInitiator - Adds an initiator to the mock data cache
 func AddInitiator(initiatorID string, initiatorName string, initiatorType string, dirPortKeys []string, hostID string) (*types.Initiator, error) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	return addInitiator(initiatorID, initiatorName, initiatorType, dirPortKeys, hostID)
+}
+
+// AddInitiator - Adds an initiator to the mock data cache
+func addInitiator(initiatorID string, initiatorName string, initiatorType string, dirPortKeys []string, hostID string) (*types.Initiator, error) {
 	if _, ok := Data.InitiatorIDToInitiator[initiatorID]; ok {
 		return nil, errors.New("Error! Initiator already exists")
 	}
@@ -2435,8 +2673,14 @@ func newHost(hostID string, hostType string, initiatorIDs []string) {
 	Data.HostIDToHost[hostID] = host
 }
 
-// AddHost - Adds a host to the mock data cache
 func AddHost(hostID string, hostType string, initiatorIDs []string) (*types.Host, error) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	return addHost(hostID, hostType, initiatorIDs)
+}
+
+// AddHost - Adds a host to the mock data cache
+func addHost(hostID string, hostType string, initiatorIDs []string) (*types.Host, error) {
 	if _, ok := Data.HostIDToHost[hostID]; ok {
 		return nil, errors.New("Error! Host already exists")
 	}
@@ -2588,13 +2832,25 @@ func removePortKey(slice []types.PortKey, keyToRemove types.PortKey) []types.Por
 	return slice
 }
 
-// UpdatePortGroupFromParams - Updates PortGroup given an EditPortGroup payload
 func UpdatePortGroupFromParams(portGroupID string, updateParams *types.EditPortGroup) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	updatePortGroupFromParams(portGroupID, updateParams)
+}
+
+// UpdatePortGroupFromParams - Updates PortGroup given an EditPortGroup payload
+func updatePortGroupFromParams(portGroupID string, updateParams *types.EditPortGroup) {
 	updatePortGroup(portGroupID, updateParams.EditPortGroupActionParam) // #nosec G20
 }
 
-// DeletePortGroup - Remove PortGroup by ID 'portGroupID'
 func DeletePortGroup(portGroupID string) (*types.PortGroup, error) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	return deletePortGroup(portGroupID)
+}
+
+// DeletePortGroup - Remove PortGroup by ID 'portGroupID'
+func deletePortGroup(portGroupID string) (*types.PortGroup, error) {
 	pg, ok := Data.PortGroupIDToPortGroup[portGroupID]
 	if !ok {
 		return nil, fmt.Errorf("error! PortGroup %s does not exist", portGroupID)
@@ -2603,15 +2859,27 @@ func DeletePortGroup(portGroupID string) (*types.PortGroup, error) {
 	return pg, nil
 }
 
-// AddPortGroupFromCreateParams - Adds a storage group from create params
 func AddPortGroupFromCreateParams(createParams *types.CreatePortGroupParams) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	addPortGroupFromCreateParams(createParams)
+}
+
+// AddPortGroupFromCreateParams - Adds a storage group from create params
+func addPortGroupFromCreateParams(createParams *types.CreatePortGroupParams) {
 	portGroupID := createParams.PortGroupID
 	portKeys := createParams.SymmetrixPortKey
 	addPortGroup(portGroupID, "Fibre", portKeys) // #nosec G20
 }
 
-// AddPortGroup - Adds a port group to the mock data cache
-func AddPortGroup(portGroupID string, portGroupType string, portIdentifiers []string) (*types.PortGroup, error) {
+func AddPortGroupWithPortID(portGroupID string, portGroupType string, portIdentifiers []string) (*types.PortGroup, error) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	return addPortGroupWithPortID(portGroupID, portGroupType, portIdentifiers)
+}
+
+// AddPortGroupWithPortID - Adds a port group to the mock data cache
+func addPortGroupWithPortID(portGroupID string, portGroupType string, portIdentifiers []string) (*types.PortGroup, error) {
 	portKeys := make([]types.PortKey, 0)
 	for _, dirPortKey := range portIdentifiers {
 		dirPortDetails := strings.Split(dirPortKey, ":")
@@ -2633,8 +2901,14 @@ func AddPortGroup(portGroupID string, portGroupType string, portIdentifiers []st
 	return Data.PortGroupIDToPortGroup[portGroupID], nil
 }
 
-// AddStorageGroupFromCreateParams - Adds a storage group from create params
 func AddStorageGroupFromCreateParams(createParams *types.CreateStorageGroupParam) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	addStorageGroupFromCreateParams(createParams)
+}
+
+// AddStorageGroupFromCreateParams - Adds a storage group from create params
+func addStorageGroupFromCreateParams(createParams *types.CreateStorageGroupParam) {
 	sgID := createParams.StorageGroupID
 	srpID := createParams.SRPID
 	serviceLevel := "None"
@@ -2644,7 +2918,7 @@ func AddStorageGroupFromCreateParams(createParams *types.CreateStorageGroupParam
 	} else {
 		srpID = ""
 	}
-	AddStorageGroup(sgID, srpID, serviceLevel) // #nosec G20
+	addStorageGroup(sgID, srpID, serviceLevel) // #nosec G20
 }
 
 // keys - Return keys of the given map
@@ -2931,6 +3205,12 @@ func removeVolumeFromStorageGroup(w http.ResponseWriter, volumeIDs []string, sgI
 	returnStorageGroup(w, sgID, false)
 }
 
+func HandlePortGroup(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handlePortGroup(w, r)
+}
+
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/portgroup/{id}
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/portgroup
 func handlePortGroup(w http.ResponseWriter, r *http.Request) {
@@ -2943,7 +3223,7 @@ func handlePortGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving Port Group(s): induced error", http.StatusRequestTimeout)
 			return
 		}
-		ReturnPortGroup(w, pgID)
+		returnPortGroup(w, pgID)
 
 	case http.MethodPost:
 		if InducedErrors.CreatePortGroupError {
@@ -2957,8 +3237,8 @@ func handlePortGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		AddPortGroupFromCreateParams(createPortGroupParams)
-		ReturnPortGroup(w, createPortGroupParams.PortGroupID)
+		addPortGroupFromCreateParams(createPortGroupParams)
+		returnPortGroup(w, createPortGroupParams.PortGroupID)
 	case http.MethodPut:
 		if InducedErrors.UpdatePortGroupError {
 			writeError(w, "Error updating Port Group: induced error", http.StatusRequestTimeout)
@@ -2971,14 +3251,14 @@ func handlePortGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		UpdatePortGroupFromParams(pgID, updatePortGroupParams)
-		ReturnPortGroup(w, pgID)
+		updatePortGroupFromParams(pgID, updatePortGroupParams)
+		returnPortGroup(w, pgID)
 	case http.MethodDelete:
 		if InducedErrors.DeletePortGroupError {
 			writeError(w, "Error deleting Port Group: induced error", http.StatusRequestTimeout)
 			return
 		}
-		_, err := DeletePortGroup(pgID)
+		_, err := deletePortGroup(pgID)
 		if err != nil {
 			writeError(w, "Error deletePortGroup", http.StatusRequestTimeout)
 			return
@@ -2990,6 +3270,12 @@ func handlePortGroup(w http.ResponseWriter, r *http.Request) {
 
 // /univmax/restapi/90/system/symmetrix/{symid}/director/{director}/port/{id}
 // /univmax/restapi/90/system/symmetrix/{symid}/director/{director}/port
+func HandlePort(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handlePort(w, r)
+}
+
 func handlePort(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	dID := vars["director"]
@@ -3009,6 +3295,10 @@ func handlePort(w http.ResponseWriter, r *http.Request) {
 					writeError(w, "Error retrieving GigE ports: induced error", http.StatusRequestTimeout)
 					return
 				}
+				if queryType[0] == "OSHostAndRDF" { // The first ?type=<value>
+					writeError(w, "Error retrieving OSHostAndRDF ports: induced error", http.StatusRequestTimeout)
+					return
+				}
 			}
 		}
 		if InducedErrors.GetPortISCSITargetError {
@@ -3020,8 +3310,15 @@ func handlePort(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		mockCacheMutex.Lock()
-		defer mockCacheMutex.Unlock()
+		if InducedErrors.GetPortNVMeTCPTargetError {
+			queryType, ok := queryString["nvmetcp_endpoint"]
+			if ok {
+				if queryType[0] == "true" { // The first ?nvmetcp_endpoint=<value>
+					writeError(w, "Error retrieving NVMeTCP targets: induced error", http.StatusRequestTimeout)
+					return
+				}
+			}
+		}
 		// if we asked for a specific Port, return those details
 		if pID != "" {
 			if InducedErrors.GetSpecificPortError {
@@ -3052,10 +3349,14 @@ func handlePort(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// AddPort adds a port entry. Port type can either be "FibreChannel" or "GigE", or "" for a non existent port.
 func AddPort(id, identifier, portType string) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	addPort(id, identifier, portType)
+}
+
+// AddPort adds a port entry. Port type can either be "FibreChannel" or "GigE", or "" for a non existent port.
+func addPort(id, identifier, portType string) {
 	port := &types.SymmetrixPortType{
 		Type:       portType,
 		Identifier: identifier,
@@ -3078,6 +3379,12 @@ func returnPortIDList(w http.ResponseWriter, dID string) {
 
 // /univmax/restapi/90/system/symmetrix/{symid}/director/{{id}
 // /univmax/restapi/90/system/symmetrix/{symid}/director
+func HandleDirector(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleDirector(w, r)
+}
+
 func handleDirector(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	dID := vars["id"]
@@ -3111,6 +3418,12 @@ func returnDirectorIDList(w http.ResponseWriter) {
 	returnJSONFile(Data.JSONDir, "directorIDList.json", w, replacements)
 }
 
+func HandleInitiator(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleInitiator(w, r)
+}
+
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/initiator/{id}
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/initiator
 func handleInitiator(w http.ResponseWriter, r *http.Request) {
@@ -3129,11 +3442,17 @@ func handleInitiator(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ReturnInitiator(w, initID)
+		returnInitiator(w, initID)
 
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
 	}
+}
+
+func HandleHost(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleHost(w, r)
 }
 
 // /univmax/restapi/90/sloprovisioning/symmetrix/{symid}/host/{id}
@@ -3148,7 +3467,7 @@ func handleHost(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving Host(s): induced error", http.StatusRequestTimeout)
 			return
 		}
-		ReturnHost(w, hostID)
+		returnHost(w, hostID)
 
 	case http.MethodPost:
 		if InducedErrors.CreateHostError {
@@ -3172,13 +3491,13 @@ func handleHost(w http.ResponseWriter, r *http.Request) {
 		}
 		if isFibre {
 			// Might need to add the Port information here
-			AddHost(createHostParam.HostID, "Fibre", createHostParam.InitiatorIDs) // #nosec G20
+			addHost(createHostParam.HostID, "Fibre", createHostParam.InitiatorIDs) // #nosec G20
 		} else {
 			// initNode := make([]string, 0)
 			// initNode = append(initNode, "iqn.1993-08.org.centos:01:5ae577b352a7")
-			AddHost(createHostParam.HostID, "iSCSI", createHostParam.InitiatorIDs) // #nosec G20
+			addHost(createHostParam.HostID, "iSCSI", createHostParam.InitiatorIDs) // #nosec G20
 		}
-		ReturnHost(w, createHostParam.HostID)
+		returnHost(w, createHostParam.HostID)
 
 	case http.MethodPut:
 		if hasError(&InducedErrors.UpdateHostError) {
@@ -3193,14 +3512,14 @@ func handleHost(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		ReturnHost(w, hostID)
+		returnHost(w, hostID)
 
 	case http.MethodDelete:
 		if InducedErrors.DeleteHostError {
 			writeError(w, "Error deleting Host: induced error", http.StatusRequestTimeout)
 			return
 		}
-		err := RemoveHost(hostID)
+		err := removeHost(hostID)
 		if err != nil {
 			writeError(w, "error removeHost", http.StatusBadRequest)
 			return
@@ -3264,9 +3583,13 @@ func returnPortGroup(w http.ResponseWriter, portGroupID string) {
 }
 
 // /univmax/restapi/performance/StorageGroup/metrics
-func handleStorageGroupMetrics(w http.ResponseWriter, _ *http.Request) {
+func HandleStorageGroupMetrics(w http.ResponseWriter, _ *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleStorageGroupMetrics(w, nil)
+}
+
+func handleStorageGroupMetrics(w http.ResponseWriter, _ *http.Request) {
 	if InducedErrors.GetStorageGroupMetricsError {
 		writeError(w, "Error getting storage group metrics: induced error", http.StatusRequestTimeout)
 		return
@@ -3297,9 +3620,13 @@ func handleStorageGroupMetrics(w http.ResponseWriter, _ *http.Request) {
 }
 
 // /univmax/restapi/performance/Volume/metrics
-func handleVolumeMetrics(w http.ResponseWriter, r *http.Request) {
+func HandleVolumeMetrics(w http.ResponseWriter, r *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleVolumeMetrics(w, r)
+}
+
+func handleVolumeMetrics(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	commaSeparatedStorageGroupList := vars["commaSeparatedStorageGroupList"]
 	if InducedErrors.GetVolumesMetricsError {
@@ -3339,9 +3666,13 @@ func handleVolumeMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // /univmax/restapi/performance/file/filesystem/metrics
-func handleFileSysMetrics(w http.ResponseWriter, _ *http.Request) {
+func HandleFileSysMetrics(w http.ResponseWriter, _ *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleFileSysMetrics(w, nil)
+}
+
+func handleFileSysMetrics(w http.ResponseWriter, _ *http.Request) {
 	if InducedErrors.GetFileSysMetricsError {
 		writeError(w, "Error getting volume metrics: induced error", http.StatusRequestTimeout)
 		return
@@ -3366,9 +3697,13 @@ func handleFileSysMetrics(w http.ResponseWriter, _ *http.Request) {
 }
 
 // /univmax/restapi/performance/StorageGroup/keys
-func handleStorageGroupPerfKeys(w http.ResponseWriter, r *http.Request) {
+func HandleStorageGroupPerfKeys(w http.ResponseWriter, r *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleStorageGroupPerfKeys(w, r)
+}
+
+func handleStorageGroupPerfKeys(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	storageGroupID := vars["storageGroupId"]
 	if InducedErrors.GetStorageGroupPerfKeyError {
@@ -3387,9 +3722,13 @@ func handleStorageGroupPerfKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 // /univmax/restapi/performance/Array/keys
-func handleArrayPerfKeys(w http.ResponseWriter, _ *http.Request) {
+func HandleArrayPerfKeys(w http.ResponseWriter, _ *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handleArrayPerfKeys(w, nil)
+}
+
+func handleArrayPerfKeys(w http.ResponseWriter, _ *http.Request) {
 	if InducedErrors.GetArrayPerfKeyError {
 		writeError(w, "Error getting array perf key: induced error", http.StatusRequestTimeout)
 		return
@@ -3403,6 +3742,12 @@ func handleArrayPerfKeys(w http.ResponseWriter, _ *http.Request) {
 		ArrayInfos: []types.ArrayInfo{arrayInfo},
 	}
 	writeJSON(w, perfKeys)
+}
+
+func HandleNotFound(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleNotFound(w, r)
 }
 
 func handleNotFound(w http.ResponseWriter, r *http.Request) {
@@ -3463,19 +3808,31 @@ func returnJSONFile(directory, filename string, w http.ResponseWriter, replaceme
 	return jsonBytes
 }
 
-// AddTempSnapshots adds marked for deletion snapshots into mock to help snapcleanup thread to be functional
 func AddTempSnapshots() {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	addTempSnapshots()
+}
+
+// AddTempSnapshots adds marked for deletion snapshots into mock to help snapcleanup thread to be functional
+func addTempSnapshots() {
 	for i := 1; i <= 2; i++ {
 		id := fmt.Sprintf("%05d", i)
 		size := 7
 		volumeIdentifier := "Vol" + id
-		AddNewVolume(id, volumeIdentifier, size, DefaultStorageGroup) // #nosec G20
+		addNewVolume(id, volumeIdentifier, size, DefaultStorageGroup) // #nosec G20
 		SnapID := fmt.Sprintf("%s-%s-%d", "DEL", "snapshot", i)
-		AddNewSnapshot(id, SnapID)
+		addNewSnapshot(id, SnapID)
 	}
 }
 
 // univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/snapshot/{SnapID}
+func HandleSnapshot(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleSnapshot(w, r)
+}
+
 func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	// volID := vars["volID"]
@@ -3497,7 +3854,7 @@ func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "problem decoding POST Snapshot payload: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		CreateSnapshot(w, r, vars["SnapID"], createSnapParam.ExecutionOption, createSnapParam.SourceVolumeList)
+		createSnapshot(w, r, vars["SnapID"], createSnapParam.ExecutionOption, createSnapParam.SourceVolumeList)
 		return
 	case http.MethodPut:
 		if SnapID == "" {
@@ -3519,7 +3876,7 @@ func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 				writeError(w, "error renaming the snapshot: induced error", http.StatusBadRequest)
 				return
 			}
-			RenameSnapshot(w, r, updateSnapParam.VolumeNameListSource, executionOption, SnapID, updateSnapParam.NewSnapshotName)
+			renameSnapshot(w, r, updateSnapParam.VolumeNameListSource, executionOption, SnapID, updateSnapParam.NewSnapshotName)
 			return
 		}
 		if updateSnapParam.Action == "Link" {
@@ -3531,7 +3888,7 @@ func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 				writeError(w, "error linking the snapshot: induced error", http.StatusBadRequest)
 				return
 			}
-			LinkSnapshot(w, r, updateSnapParam.VolumeNameListSource, updateSnapParam.VolumeNameListTarget, executionOption, SnapID)
+			linkSnapshot(w, r, updateSnapParam.VolumeNameListSource, updateSnapParam.VolumeNameListTarget, executionOption, SnapID)
 			return
 		}
 		if updateSnapParam.Action == "Unlink" {
@@ -3539,7 +3896,7 @@ func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 				writeError(w, "error unlinking the snapshot: induced error", http.StatusBadRequest)
 				return
 			}
-			UnlinkSnapshot(w, r, updateSnapParam.VolumeNameListSource, updateSnapParam.VolumeNameListTarget, executionOption, SnapID)
+			unlinkSnapshot(w, r, updateSnapParam.VolumeNameListSource, updateSnapParam.VolumeNameListTarget, executionOption, SnapID)
 			return
 		}
 		if updateSnapParam.Action == "Restore" {
@@ -3555,7 +3912,7 @@ func handleSnapshot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "problem decoding Delete Snapshot payload: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		DeleteSnapshot(w, r, vars["SnapID"], deleteSnapParam.ExecutionOption, deleteSnapParam.DeviceNameListSource, deleteSnapParam.Generation)
+		deleteSnapshot(w, r, vars["SnapID"], deleteSnapParam.ExecutionOption, deleteSnapParam.DeviceNameListSource, deleteSnapParam.Generation)
 		return
 	}
 }
@@ -3874,13 +4231,17 @@ func duplicateSnapshotCreationRequest(source, SnapID string) bool {
 }
 
 // GET univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/volume
+func HandleSymVolumes(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleSymVolumes(w, r)
+}
+
 func handleSymVolumes(w http.ResponseWriter, r *http.Request) {
 	if InducedErrors.GetSymVolumeError {
 		writeError(w, "error fetching the list: induced error", http.StatusBadRequest)
 		return
 	}
-	mockCacheMutex.Lock()
-	defer mockCacheMutex.Unlock()
 	queryParams := r.URL.Query()
 	symVolumeList := new(types.SymVolumeList)
 	if details := queryParams.Get("includeDetails"); details == "true" {
@@ -3917,12 +4278,16 @@ func handleSymVolumes(w http.ResponseWriter, r *http.Request) {
 
 // GET univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/volume/{volID}/snapshot/
 // GET univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}
+func HandleVolSnaps(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleVolSnaps(w, r)
+}
+
 func handleVolSnaps(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	volID := vars["volID"]
 	SnapID := vars["SnapID"]
-	mockCacheMutex.Lock()
-	defer mockCacheMutex.Unlock()
 	if InducedErrors.GetVolSnapsError {
 		writeError(w, "error fetching the Snapshot Info: induced error", http.StatusBadRequest)
 		return
@@ -4021,13 +4386,17 @@ func returnVolumeSnapshotLink(targetVolID string) []types.VolumeSnapshotLink {
 
 // GET univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation
 // GET univmax/restapi/private/APIVersion/replication/symmetrix/{symid}/volume/{volID}/snapshot/{SnapID}/generation/{genID}
+func HandleGenerations(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleGenerations(w, r)
+}
+
 func handleGenerations(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	volID := vars["volID"]
 	SnapID := vars["SnapID"]
 	genID := vars["genID"]
-	mockCacheMutex.Lock()
-	defer mockCacheMutex.Unlock()
 	if Data.VolumeIDToVolume[volID] == nil {
 		writeError(w, "Could not find volume: "+volID, http.StatusNotFound)
 		return
@@ -4067,6 +4436,12 @@ func handleGenerations(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func HandleCapabilities(w http.ResponseWriter, _ *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleCapabilities(w, nil)
+}
+
 func handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	var jsonBytes []byte
 	if InducedErrors.SnapshotNotLicensed {
@@ -4087,9 +4462,13 @@ func handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	return
 }
 
-func handlePrivVolume(w http.ResponseWriter, r *http.Request) {
+func HandlePrivVolume(w http.ResponseWriter, r *http.Request) {
 	mockCacheMutex.Lock()
 	defer mockCacheMutex.Unlock()
+	handlePrivVolume(w, r)
+}
+
+func handlePrivVolume(w http.ResponseWriter, r *http.Request) {
 	if InducedErrors.GetPrivVolumeByIDError {
 		writeError(w, "error fetching the Volume structure: induced error", http.StatusBadRequest)
 		return
@@ -4191,6 +4570,12 @@ func returnSrcSnapshotGenInfo(volID string) []types.SourceSnapshotGenInfo {
 	return srcSnapGenInfo
 }
 
+func HandleHostGroup(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleHostGroup(w, r)
+}
+
 // /univmax/restapi/100/sloprovisioning/symmetrix/{symid}/hostgroup/{id}
 // /univmax/restapi/100/sloprovisioning/symmetrix/{symid}/hostgroup
 func handleHostGroup(w http.ResponseWriter, r *http.Request) {
@@ -4206,7 +4591,7 @@ func handleHostGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving HostGroupList: induced error", http.StatusRequestTimeout)
 			return
 		}
-		ReturnHostGroup(w, hostGroupID)
+		returnHostGroup(w, hostGroupID)
 
 	case http.MethodPost:
 		if InducedErrors.CreateHostGroupError {
@@ -4220,8 +4605,8 @@ func handleHostGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		AddHostGroup(createHostGroupParam.HostGroupID, createHostGroupParam.HostIDs, createHostGroupParam.HostFlags) // #nosec G20
-		ReturnHostGroup(w, createHostGroupParam.HostGroupID)
+		addHostGroup(createHostGroupParam.HostGroupID, createHostGroupParam.HostIDs, createHostGroupParam.HostFlags) // #nosec G20
+		returnHostGroup(w, createHostGroupParam.HostGroupID)
 
 	case http.MethodPut:
 		if hasError(&InducedErrors.UpdateHostGroupError) {
@@ -4235,15 +4620,15 @@ func handleHostGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		UpdateHostGroupFromParams(hostGroupID, updateHostGroupParam)
-		ReturnHostGroup(w, hostGroupID)
+		updateHostGroupFromParams(hostGroupID, updateHostGroupParam)
+		returnHostGroup(w, hostGroupID)
 
 	case http.MethodDelete:
 		if InducedErrors.DeleteHostGroupError {
 			writeError(w, "Error deleting HostGroup: induced error", http.StatusRequestTimeout)
 			return
 		}
-		err := RemoveHostGroup(hostGroupID)
+		err := removeHostGroup(hostGroupID)
 		if err != nil {
 			writeError(w, "error removeHostGroup", http.StatusBadRequest)
 			return
@@ -4279,8 +4664,14 @@ func returnHostGroup(w http.ResponseWriter, hostGroupID string) {
 	}
 }
 
-// AddHostGroup - Adds a host group to the mock data cache
 func AddHostGroup(hostGroupID string, hostIDs []string, hostFlags *types.HostFlags) (*types.HostGroup, error) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	return addHostGroup(hostGroupID, hostIDs, hostFlags)
+}
+
+// AddHostGroup - Adds a host group to the mock data cache
+func addHostGroup(hostGroupID string, hostIDs []string, hostFlags *types.HostFlags) (*types.HostGroup, error) {
 	if _, ok := Data.HostGroupIDToHostGroup[hostGroupID]; ok {
 		return nil, errors.New("error! Host Group already exists")
 	}
@@ -4327,8 +4718,14 @@ func removeHostGroup(hostGroupID string) error {
 	return nil
 }
 
-// UpdateHostGroupFromParams - Updates HostGroup given an UpdateHostGroupParam payload
 func UpdateHostGroupFromParams(hostGroupID string, updateParams *types.UpdateHostGroupParam) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	updateHostGroupFromParams(hostGroupID, updateParams)
+}
+
+// UpdateHostGroupFromParams - Updates HostGroup given an UpdateHostGroupParam payload
+func updateHostGroupFromParams(hostGroupID string, updateParams *types.UpdateHostGroupParam) {
 	updateHostGroup(hostGroupID, updateParams.EditHostGroupAction) // #nosec G20
 }
 
@@ -4446,6 +4843,12 @@ func handleFlags(hostGroup *types.HostGroup, flagPayload *types.HostFlags) {
 
 // /univmax/restapi/100/file/symmetrix/{symID}/nas_server/
 // /univmax/restapi/100/file/symmetrix/{symID}/nas_server/{nasID}
+func HandleNASServer(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleNASServer(w, r)
+}
+
 func handleNASServer(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nasID := vars["nasID"]
@@ -4459,7 +4862,7 @@ func handleNASServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving NAS server: induced error", http.StatusRequestTimeout)
 			return
 		}
-		ReturnNASServer(w, nasID)
+		returnNASServer(w, nasID)
 	case http.MethodPut:
 		if InducedErrors.UpdateNASServerError {
 			writeError(w, "Error updating NAS server: induced error", http.StatusRequestTimeout)
@@ -4472,14 +4875,14 @@ func handleNASServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		UpdateNASServer(nasID, *modifyNASServerParam)
-		ReturnNASServer(w, nasID)
+		updateNASServer(nasID, modifyNASServerParam.Name)
+		returnNASServer(w, nasID)
 	case http.MethodDelete:
 		if InducedErrors.DeleteNASServerError {
 			writeError(w, "Error deleting NAS server: induced error", http.StatusRequestTimeout)
 			return
 		}
-		RemoveNASServer(w, nasID)
+		removeNASServer(w, nasID)
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
 	}
@@ -4541,6 +4944,12 @@ func returnNASServer(w http.ResponseWriter, nasID string) {
 
 // /univmax/restapi/100/file/symmetrix/{symID}/nfs_export/
 // /univmax/restapi/100/file/symmetrix/{symID}/nfs_export/{nfsID}
+func HandleNFSExport(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleNFSExport(w, r)
+}
+
 func handleNFSExport(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nfsID := vars["nfsID"]
@@ -4554,7 +4963,7 @@ func handleNFSExport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving NFS Export: induced error", http.StatusNotFound)
 			return
 		}
-		ReturnNFSExport(w, nfsID)
+		returnNFSExport(w, nfsID)
 	case http.MethodPost:
 		if InducedErrors.CreateNFSExportError {
 			writeError(w, "Error creating NFS Export: induced error", http.StatusRequestTimeout)
@@ -4567,8 +4976,8 @@ func handleNFSExport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		AddNewNFSExport("id-3", createNFSExportParam.Name)
-		ReturnNFSExport(w, "id-3")
+		addNewNFSExport("id-3", createNFSExportParam.Name)
+		returnNFSExport(w, "id-3")
 	case http.MethodPut:
 		if InducedErrors.UpdateNFSExportError {
 			writeError(w, "Error updating NFS Export: induced error", http.StatusRequestTimeout)
@@ -4581,14 +4990,14 @@ func handleNFSExport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		UpdateNFSExport(nfsID, *modifyNFSExportParam)
-		ReturnNFSExport(w, nfsID)
+		updateNFSExport(nfsID, modifyNFSExportParam.Name)
+		returnNFSExport(w, nfsID)
 	case http.MethodDelete:
 		if InducedErrors.DeleteNFSExportError {
 			writeError(w, "Error deleting NFS Export: induced error", http.StatusRequestTimeout)
 			return
 		}
-		RemoveNFSExport(w, nfsID)
+		removeNFSExport(w, nfsID)
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
 	}
@@ -4674,6 +5083,12 @@ func returnNFSExport(w http.ResponseWriter, nfsID string) {
 
 // /univmax/restapi/100/file/symmetrix/{symID}/file_system/
 // /univmax/restapi/100/file/symmetrix/{symID}/file_system/{fsID}
+func HandleFileSystem(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleFileSystem(w, r)
+}
+
 func handleFileSystem(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	fsID := vars["fsID"]
@@ -4739,7 +5154,7 @@ func handleFileSystem(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, fileSysIter)
 			}
 		}
-		ReturnFileSystem(w, fsID)
+		returnFileSystem(w, fsID)
 	case http.MethodPost:
 		if InducedErrors.CreateFileSystemError {
 			writeError(w, "Error creating file system: induced error", http.StatusRequestTimeout)
@@ -4754,8 +5169,8 @@ func handleFileSystem(w http.ResponseWriter, r *http.Request) {
 		}
 		id := strconv.Itoa(time.Now().Nanosecond())
 		fsID := fmt.Sprintf("%s-%s-%d-%s", "649112ce-742b", "id", len(Data.FileSysIDToFileSystem), id)
-		AddNewFileSystem(fsID, createFileSystemParam.Name, createFileSystemParam.SizeTotal)
-		ReturnFileSystem(w, fsID)
+		addNewFileSystem(fsID, createFileSystemParam.Name, createFileSystemParam.SizeTotal)
+		returnFileSystem(w, fsID)
 	case http.MethodPut:
 		if InducedErrors.UpdateFileSystemError {
 			writeError(w, "Error updating file system: induced error", http.StatusRequestTimeout)
@@ -4768,14 +5183,14 @@ func handleFileSystem(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "InvalidJson", http.StatusBadRequest)
 			return
 		}
-		UpdateFileSystem(fsID, *modifyFileSystemParam)
-		ReturnFileSystem(w, fsID)
+		updateFileSystem(fsID, modifyFileSystemParam.SizeTotal)
+		returnFileSystem(w, fsID)
 	case http.MethodDelete:
 		if InducedErrors.DeleteFileSystemError {
 			writeError(w, "Error deleting file system: induced error", http.StatusRequestTimeout)
 			return
 		}
-		RemoveFileSystem(w, fsID)
+		removeFileSystem(w, fsID)
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
 	}
@@ -5013,6 +5428,12 @@ func newFileInterface(interfaceID, interfaceName string) *types.FileInterface {
 
 // /univmax/restapi/100/file/symmetrix/{symID}//file_interface/
 // /univmax/restapi/100/file/symmetrix/file_interface/{interfaceID}
+func HandleFileInterface(w http.ResponseWriter, r *http.Request) {
+	mockCacheMutex.Lock()
+	defer mockCacheMutex.Unlock()
+	handleFileInterface(w, r)
+}
+
 func handleFileInterface(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	interfaceID := vars["interfaceID"]
@@ -5022,7 +5443,7 @@ func handleFileInterface(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "Error retrieving FileSystemInterface: induced error", http.StatusNotFound)
 			return
 		}
-		ReturnFileInterface(w, interfaceID)
+		returnFileInterface(w, interfaceID)
 	default:
 		writeError(w, "Invalid Method", http.StatusBadRequest)
 	}

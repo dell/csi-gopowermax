@@ -1054,6 +1054,17 @@ Scenario Outline: Test GetHostList
     | "000197900046"  | "000197900046"        | "none"                           |
     | "000197900046"  | "000197802104"        | "ignored as it is not managed"   |
 
+  Scenario Outline: Refresh Symmetrix system
+    Given a valid connection
+    And I have an allowed list of <allowedarrays>
+    When I call RefreshSymmetrix <array>
+    Then the error message contains <errormsg>
+    Examples:
+    | allowedarrays   | array               | errormsg                            |
+    | "000197900046"  |  "000197900046"     | "none"                              | 
+    | "000197900046"  |  "000011112222"     |"is ignored as it is not managed"    |
+
+
   Scenario Outline: Get ISCSI targets
     Given a valid connection
     And I have an allowed list of <arrays>
@@ -1069,6 +1080,23 @@ Scenario Outline: Test GetHostList
     | "000197900046"   | "GetPortISCSITargetError" | "Error retrieving ISCSI targets" | 0     |
     | "000197900046"   | "GetSpecificPortError"    | "none"                           | 0     |
     | "000197900046"   | "none"                    | "none"                           | 8     |
+
+  Scenario Outline: Get NVMeTCP targets
+    Given a valid connection
+    And I have an allowed list of <arrays>
+    And I induce error <induced>
+    When I call GetNVMeTCPTargets
+    Then the error message contains <errormsg>
+    And I recieve <count> targets
+    Examples:
+    | arrays           | induced                     | errormsg                           | count |
+    | "000197900046"   | "none"                      | "none"                             | 0     |
+    | "000000000000"   | "none"                      | "ignored as it is not managed"     | 0     |
+    | "000197900046"   | "GetDirectorError"          | "Error retrieving Director"        | 0     |
+    | "000197900046"   | "GetPortGigEError"          | "none"                             | 0     |
+    | "000197900046"   | "GetSpecificPortError"      | "none"                             | 0     |
+    | "000197900046"   | "GetPortNVMeTCPTargetError" | "Error retrieving NVMeTCP targets" | 0     |
+   
 
   Scenario Outline: Test UpdateHostName
       Given a valid connection
@@ -1206,3 +1234,18 @@ Scenario Outline: Test GetHostList
     | nvols      | vols  | induced                    | errormsg                      | arrays    |
     | 7          | 7     | "none"                     | "none"                        | ""        |
     | 5          | 5     | "none"                     | "ignored as it is not managed"| "ignore"  |
+
+  Scenario Outline: Test cases for GetStorageGroupVolumeIDList
+    Given a valid connection
+    And I have an allowed list of <arrays>
+    And I have a StorageGroup <sgname>
+    And I have <nvols> volumes
+    And I induce error <induced>
+    When I call GetVolumeIDListInStorageGroup <sgname>
+    Then the error message contains <errormsg>
+    And I get a valid VolumeIDList with <vols> if no error
+
+    Examples:
+    | nvols      | vols  | induced  | errormsg                      | arrays          | sgname      | 
+    | 7          | 7     | "none"   | "none"                        | "000197900046"  | "TestSG"    | 
+    | 5          | 5     | "none"   | "storageGroupID is empty"     | "000197900046"  | ""          |

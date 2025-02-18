@@ -74,6 +74,7 @@ type unitContext struct {
 
 	symIDList                  *types.SymmetrixIDList
 	sym                        *types.Symmetrix
+	directorIDList             *types.DirectorIDList
 	vol                        *types.Volume
 	volList                    []string
 	storageGroup               *types.StorageGroup
@@ -95,6 +96,7 @@ type unitContext struct {
 	uMaskingView               *uMV
 	addressList                []string
 	targetList                 []ISCSITarget
+	nvmeTCPTargetList          []NVMeTCPTarget
 	storagePool                *types.StoragePool
 	volIDList                  []string
 	hostID                     string
@@ -350,6 +352,8 @@ func (c *unitContext) iInduceError(errorType string) error {
 		mock.InducedErrors.GetPortGigEError = true
 	case "GetPortISCSITargetError":
 		mock.InducedErrors.GetPortISCSITargetError = true
+	case "GetPortNVMeTCPTargetError":
+		mock.InducedErrors.GetPortNVMeTCPTargetError = true
 	case "GetDirectorError":
 		mock.InducedErrors.GetDirectorError = true
 	case "GetStoragePoolError":
@@ -638,6 +642,11 @@ func (c *unitContext) iCallGetVolumeIDListWithParams() error {
 		"cap_tb": "=1.0",
 	}
 	c.volList, c.err = c.client.GetVolumeIDListWithParams(context.TODO(), symID, param)
+	return nil
+}
+
+func (c *unitContext) iCallGetVolumeIDListInStorageGroup(sgID string) error {
+	c.volList, c.err = c.client.GetVolumeIDListInStorageGroup(context.TODO(), symID, sgID)
 	return nil
 }
 
@@ -1075,7 +1084,7 @@ func (c *unitContext) iCallRenameMaskingViewWith(newName string) error {
 }
 
 func (c *unitContext) iHaveAPortGroup() error {
-	mock.AddPortGroup(testPortGroup, "ISCSI", []string{"SE-1E:000"})
+	mock.AddPortGroupWithPortID(testPortGroup, "ISCSI", []string{"SE-1E:000"})
 	return nil
 }
 
@@ -1882,6 +1891,16 @@ func (c *unitContext) iCallGetISCSITargets() error {
 	return nil
 }
 
+func (c *unitContext) iCallGetNVMeTCPTargets() error {
+	c.nvmeTCPTargetList, c.err = c.client.GetNVMeTCPTargets(context.TODO(), symID)
+	return nil
+}
+
+func (c *unitContext) iCallRefreshSymmetrix(id string) error {
+	c.err = c.client.RefreshSymmetrix(context.TODO(), id)
+	return nil
+}
+
 func (c *unitContext) iRecieveTargets(count int) error {
 	if len(c.targetList) != count {
 		return fmt.Errorf("expected to get %d targets but recieved %d", count, len(c.targetList))
@@ -2611,6 +2630,11 @@ func (c *unitContext) iGetAValidFileInterfaceObjectIfNoError() error {
 	return nil
 }
 
+func (c *unitContext) iCallGetDirectorIDList() error {
+	c.directorIDList, c.err = c.client.GetDirectorIDList(context.TODO(), symID)
+	return nil
+}
+
 func UnitTestContext(s *godog.ScenarioContext) {
 	c := &unitContext{}
 	s.Step(`^I induce error "([^"]*)"$`, c.iInduceError)
@@ -2642,6 +2666,7 @@ func UnitTestContext(s *godog.ScenarioContext) {
 	s.Step(`^I call GetJobByID$`, c.iCallGetJobByID)
 	s.Step(`^I get a valid Job with state "([^"]*)" if no error$`, c.iGetAValidJobWithStateIfNoError)
 	s.Step(`^I call WaitOnJobCompletion$`, c.iCallWaitOnJobCompletion)
+	s.Step(`^I call RefreshSymmetrix "([^"]*)"$`, c.iCallRefreshSymmetrix)
 	// Volumes
 	s.Step(`^I call CreateVolumeInStorageGroup with name "([^"]*)" and size (\d+)$`, c.iCallCreateVolumeInStorageGroupWithNameAndSize)
 	s.Step(`^I call CreateVolumeInStorageGroup with name "([^"]*)" and size (\d+) and unit "([^"]*)"$`, c.iCallCreateVolumeInStorageGroupWithNameAndSizeAndUnit)
@@ -2722,6 +2747,7 @@ func UnitTestContext(s *godog.ScenarioContext) {
 	s.Step(`^then the Volumes are part of StorageGroup if no error$`, c.thenTheVolumesArePartOfStorageGroupIfNoError)
 	s.Step(`^I call UpdateHost$`, c.iCallUpdateHost)
 	s.Step(`^I call UpdateHostFlags$`, c.iCallUpdateHostFlags)
+	s.Step(`^I call GetVolumeIDListInStorageGroup "([^"]*)"$`, c.iCallGetVolumeIDListInStorageGroup)
 	// GetListOftargetAddresses
 	s.Step(`^I call GetListOfTargetAddresses$`, c.iCallGetListOfTargetAddresses)
 	s.Step(`^I recieve (\d+) IP addresses$`, c.iRecieveIPAddresses)
@@ -2770,6 +2796,7 @@ func UnitTestContext(s *godog.ScenarioContext) {
 	s.Step(`^I call GetPrivVolumeByID with "([^"]*)"$`, c.iCallGetPrivVolumeByIDWith)
 	s.Step(`^I should get a private volume information if no error$`, c.iShouldGetAPrivateVolumeInformationIfNoError)
 	s.Step(`^I call GetISCSITargets$`, c.iCallGetISCSITargets)
+	s.Step(`^I call GetNVMeTCPTargets$`, c.iCallGetNVMeTCPTargets)
 	s.Step(`^I recieve (\d+) targets$`, c.iRecieveTargets)
 	s.Step(`^there should be no errors$`, c.thereShouldBeNoErrors)
 	s.Step(`^I call UpdateHostName "([^"]*)"$`, c.iCallUpdateHostName)
