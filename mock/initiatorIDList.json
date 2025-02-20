@@ -73,6 +73,8 @@
         "SE-2E:000:iqn.1993-08.org.debian:01:8f21cc8ad2a7",
         "SE-1E:000:iqn.1993-08.org.debian:01:a86eeef2c837",
         "SE-2E:001:iqn.1993-08.org.debian:01:a86eeef2c837",
-        "SE-2E:000:iqn.1993-08.org.debian:01:a86eeef2c837"
+        "SE-2E:000:iqn.1993-08.org.debian:01:a86eeef2c837",
+        "OR-1C:001:nqn.2019-08.org.emc:sn.0x10000090fa6603b7",
+        "OR-1C:002:nqn.2019-08.org.dell:sn.0x10000090fa6603b7"
     ]
 }

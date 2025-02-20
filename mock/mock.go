@@ -590,6 +590,16 @@ func initMockCache() {
 	initNode3List = append(initNode3List, hba1Node3)
 	initNode3List = append(initNode3List, hba2Node3)
 	addHost("CSI-Test-Node-3-FC", "Fibre", initNode3List) // #nosec G20
+
+	nvmeDir1 := "OR-1C"
+	nvmedir1PortKey1 := nvmeDir1 + ":" + "001"
+	nqnNodeList := make([]string, 0)
+	nqnNode1 := "nqn.2019-08.org.emc:sn.0x10000090fa6603b7"
+	nqnInit1 := nvmedir1PortKey1 + ":" + nqnNode1
+	nqnNodeList = append(nqnNodeList, nqnInit1)
+	addInitiator(nqnNode1, nqnNode1, "OSHostAndRDF", []string{nvmedir1PortKey1}, "")
+
+	addHost("CSI-Test-Node-4-NVMETCP", "NVMETCP", nqnNodeList)
 	addTempSnapshots()
 	addFileObjects()
 }
@@ -3340,7 +3350,13 @@ func handlePort(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			returnPort(w, dID, pID)
+			fmt.Printf("in GetPORT : URL = %+v ---------------- > %+v", r.URL, r.URL.Query())
+			_, ok := queryString["nvmetcp_endpoint"]
+			if ok {
+				returnNVMePort(w, dID, pID)
+			} else {
+				returnPort(w, dID, pID)
+			}
 		}
 		// return a list of Ports
 		returnPortIDList(w, dID)
@@ -3371,6 +3387,12 @@ func returnPort(w http.ResponseWriter, dID, pID string) {
 	returnJSONFile(Data.JSONDir, "port_template.json", w, replacements)
 }
 
+func returnNVMePort(w http.ResponseWriter, dID, pID string) {
+	replacements := make(map[string]string)
+	replacements["__PORT_ID__"] = pID
+	replacements["__DIRECTOR_ID__"] = dID
+	returnJSONFile(Data.JSONDir, "nvme_port_template.json", w, replacements)
+}
 func returnPortIDList(w http.ResponseWriter, dID string) {
 	replacements := make(map[string]string)
 	replacements["__DIRECTOR_ID__"] = dID
@@ -3483,20 +3505,25 @@ func handleHost(w http.ResponseWriter, r *http.Request) {
 		}
 		// Scan the initiators to see if there are any non iqn ones; then assume
 		// host type Fibre.
-		isFibre := false
+		// isFibre := false
+		// isNVMe := false
+		// isISCSI := false
 		for _, initiator := range createHostParam.InitiatorIDs {
-			if !strings.HasPrefix(initiator, "iqn.") {
-				isFibre = true
+			if strings.HasPrefix(initiator, "iqn.") {
+				//isFibre = true
+				// initNode := make([]string, 0)
+				// initNode = append(initNode, "iqn.1993-08.org.centos:01:5ae577b352a7")
+				addHost(createHostParam.HostID, "iSCSI", createHostParam.InitiatorIDs) // #nosec G20
+			} else if strings.HasPrefix(initiator, "nqn.") {
+				//isNVMe = true
+				addHost(createHostParam.HostID, "NVMETCP", createHostParam.InitiatorIDs) // #nosec G20
+			} else {
+				//isFibre = true
+				// Might need to add the Port information here
+				addHost(createHostParam.HostID, "Fibre", createHostParam.InitiatorIDs) // #nosec G20
 			}
 		}
-		if isFibre {
-			// Might need to add the Port information here
-			addHost(createHostParam.HostID, "Fibre", createHostParam.InitiatorIDs) // #nosec G20
-		} else {
-			// initNode := make([]string, 0)
-			// initNode = append(initNode, "iqn.1993-08.org.centos:01:5ae577b352a7")
-			addHost(createHostParam.HostID, "iSCSI", createHostParam.InitiatorIDs) // #nosec G20
-		}
+
 		returnHost(w, createHostParam.HostID)
 
 	case http.MethodPut:
