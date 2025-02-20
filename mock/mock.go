@@ -129,6 +129,12 @@ var Data struct {
 	FileIntIDtoFileInterface map[string]*types.FileInterface
 }
 
+var Filters = new(filters)
+
+type filters struct {
+	GetNVMePorts bool
+}
+
 var InducedErrors = new(inducedErrors)
 
 // InducedErrors constants
@@ -256,6 +262,7 @@ type inducedErrors struct {
 	GetFileInterfaceError                  bool
 	ExecuteActionError                     bool
 	GetFreshMetrics                        bool
+	GetNVMePorts                           bool
 }
 
 // hasError checks to see if the specified error (via pointer)
@@ -3351,8 +3358,7 @@ func handlePort(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			fmt.Printf("in GetPORT : URL = %+v ---------------- > %+v", r.URL, r.URL.Query())
-			_, ok := queryString["nvmetcp_endpoint"]
-			if ok {
+			if Filters.GetNVMePorts {
 				returnNVMePort(w, dID, pID)
 			} else {
 				returnPort(w, dID, pID)
