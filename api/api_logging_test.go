@@ -17,6 +17,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -24,6 +25,16 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
+
+type ErrorReader struct{}
+
+func (r *ErrorReader) Close() error {
+	return fmt.Errorf("error closing the body")
+}
+
+func (r *ErrorReader) Read(_ []byte) (n int, err error) {
+	return 0, fmt.Errorf("error reading the body")
+}
 
 func TestIsBinOctetBody(t *testing.T) {
 	tests := []struct {
@@ -111,7 +122,7 @@ func TestDumpRequest(t *testing.T) {
 		name        string
 		method      string
 		url         string
-		body        string
+		body        io.Reader
 		headers     map[string]string
 		expectError bool
 		expected    []string
@@ -120,7 +131,7 @@ func TestDumpRequest(t *testing.T) {
 			name:     "GET request without body",
 			method:   "GET",
 			url:      "http://example.com",
-			body:     "",
+			body:     bytes.NewBufferString(""),
 			headers:  map[string]string{},
 			expected: []string{"GET / HTTP/1.1", "Host: example.com"},
 		},
@@ -128,7 +139,7 @@ func TestDumpRequest(t *testing.T) {
 			name:     "POST request with body",
 			method:   "POST",
 			url:      "http://example.com",
-			body:     "test body",
+			body:     bytes.NewBufferString("test body"),
 			headers:  map[string]string{"Content-Type": "application/json"},
 			expected: []string{"POST / HTTP/1.1", "Host: example.com", "Content-Type: application/json", "test body"},
 		},
@@ -136,20 +147,49 @@ func TestDumpRequest(t *testing.T) {
 			name:     "Request with Authorization header",
 			method:   "GET",
 			url:      "http://example.com",
-			body:     "",
+			body:     bytes.NewBufferString(""),
 			headers:  map[string]string{"Authorization": "Basic dXNlcjpwYXNz"},
 			expected: []string{"GET / HTTP/1.1", "Host: example.com"},
+		},
+		{
+			name:   "Request with invalid Authorization header",
+			method: http.MethodGet,
+			url:    "http://example.com",
+			body:   bytes.NewBufferString(""),
+			headers: map[string]string{
+				"Authorization": "Basic invalid_base64_string",
+			},
+			expectError: true,
+			expected:    []string{"GET / HTTP/1.1", "Host: example.com"},
+		},
+		{
+			name:     "Request with empty Host",
+			method:   http.MethodGet,
+			body:     bytes.NewBufferString(""),
+			headers:  map[string]string{"Authorization": "Basic dXNlcjpwYXNz"},
+			expected: []string{"GET / HTTP/1.1", "Host: example.com"},
+		},
+		{
+			name:        "Request with invalid body",
+			method:      http.MethodGet,
+			body:        &ErrorReader{},
+			headers:     map[string]string{"Authorization": "Basic dXNlcjpwYXNz"},
+			expectError: true,
+			expected:    []string{"GET / HTTP/1.1", "Host: example.com"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req, err := http.NewRequest(test.method, test.url, bytes.NewBufferString(test.body))
+			req, err := http.NewRequest(test.method, test.url, test.body)
+			req.TransferEncoding = []string{"chunked"}
+			req.Close = true
 			assert.NoError(t, err)
 
 			for key, value := range test.headers {
 				req.Header.Set(key, value)
 			}
+			req.URL.Host = "example.com"
 
 			var buf bytes.Buffer
 			log.SetOutput(&buf)

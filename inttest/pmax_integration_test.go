@@ -2070,6 +2070,22 @@ func TestGetISCSITargets(t *testing.T) {
 	fmt.Printf("Targets: %v\n", targets)
 }
 
+func TestGetNVMeTCPTargets(t *testing.T) {
+	if client == nil {
+		err := getClient()
+		if err != nil {
+			t.Error(err.Error())
+			return
+		}
+	}
+	targets, err := client.GetNVMeTCPTargets(context.TODO(), symmetrixID)
+	if err != nil {
+		t.Error("Error calling GetNVMeTCPTargets " + err.Error())
+		return
+	}
+	fmt.Printf("Targets: %v\n", targets)
+}
+
 func TestExpandVolume(t *testing.T) {
 	if client == nil {
 		err := getClient()

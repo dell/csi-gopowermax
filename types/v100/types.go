@@ -103,15 +103,15 @@ type StoragePool struct {
 
 // FbaCap FBA storage pool capacity
 type FbaCap struct {
-	Provisioned *provisioned `json:"provisioned"`
+	Provisioned *Provisioned `json:"provisioned"`
 }
 
 // CkdCap CKD storage pool capacity
 type CkdCap struct {
-	Provisioned *provisioned `json:"provisioned"`
+	Provisioned *Provisioned `json:"provisioned"`
 }
 
-type provisioned struct {
+type Provisioned struct {
 	UsableUsedInTB float64 `json:"used_tb"`
 	UsableTotInTB  float64 `json:"effective_capacity_tb"`
 	//	EffectiveUsedCapacityPercent float64 `json:"provisioned_percent"`

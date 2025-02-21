@@ -381,7 +381,7 @@ func (c *Client) GetNVMeTCPTargets(ctx context.Context, symID string) ([]NVMeTCP
 	}
 
 	for _, d := range directors.DirectorIDs {
-		// Check if director is ISCSI
+		// Check if director is NVMETCP
 		// To do this, check if any ports have ports with GigE enabled
 		ports, err := c.GetPortList(ctx, symID, d, "type=OSHostAndRDF")
 		if err != nil {
@@ -391,8 +391,8 @@ func (c *Client) GetNVMeTCPTargets(ctx context.Context, symID string) ([]NVMeTCP
 			continue
 		}
 		if len(ports.SymmetrixPortKey) > 0 {
-			// This is a director with ISCSI port(s)
-			// Query for iscsi_targets
+			// This is a director with NVMeTCP port(s)
+			// Query for nvmetcp_endpoints
 			virtualPorts, err := c.GetPortList(ctx, symID, d, "nvmetcp_endpoint=true")
 			if err != nil {
 				return []NVMeTCPTarget{}, err
