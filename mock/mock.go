@@ -601,7 +601,7 @@ func initMockCache() {
 	nvmeDir1 := "OR-1C"
 	nvmedir1PortKey1 := nvmeDir1 + ":" + "001"
 	nqnNodeList := make([]string, 0)
-	nqnNode1 := "nqn.2019-08.org.emc:sn.0x10000090fa6603b7"
+	nqnNode1 := "nqn.1988-11.com.dell.mock:00:e6e2d5b871f1403E169D0"
 	nqnInit1 := nvmedir1PortKey1 + ":" + nqnNode1
 	nqnNodeList = append(nqnNodeList, nqnInit1)
 	addInitiator(nqnNode1, nqnNode1, "OSHostAndRDF", []string{nvmedir1PortKey1}, "")

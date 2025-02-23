@@ -33,7 +33,7 @@
             "lqam9024_diamond_sg_mv_MV"
         ],
         "max_speed": "0",
-        "iscsi_target": true,
+        "iscsi_target": false,       
         "ip_addresses": [
             "1.1.1.1"
         ]
