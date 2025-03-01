@@ -1,6 +1,6 @@
 module github.com/dell/gopowermax/v2
 
-go 1.23
+go 1.24
 
 require (
 	github.com/cucumber/godog v0.15.0
